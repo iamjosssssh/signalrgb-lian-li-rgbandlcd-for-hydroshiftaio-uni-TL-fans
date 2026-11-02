@@ -11,19 +11,16 @@ export function Documentation() { return ""; }
 export function Size() { return [1, 1]; }
 export function DeviceType() { return "lcd"; }
 export function Type() { return "rawusb"; }
+export function ImageUrl() { return "https://assets.signalrgb.com/devices/brands/lian-li/fans/tl-lcd-fan.png"; }
 export function ConflictingProcesses() { return ["L-Connect 3.exe", "L-Connect-Service.exe"]; }
 export function Validate(endpoint) { return endpoint.interface === 0; }
 
 /* global
-FrameRate:readonly
 JpegQuality:readonly
-ScreenBrightness:readonly
 */
 export function ControllableParameters() {
 	return [
-		{"property":"FrameRate", "group":"", "label":"Frame Rate", "description":"Higher rates use more CPU.", "type":"combobox", "values":["5", "10", "15", "20", "30"], "default":"20"},
-		{"property":"JpegQuality", "group":"", "label":"JPEG Quality", "type":"number", "min":"30", "max":"95", "step":"5", "default":"75"},
-		{"property":"ScreenBrightness", "group":"", "label":"Screen Brightness", "type":"number", "min":"0", "max":"100", "step":"5", "default":"100"},
+		{"property":"JpegQuality", "group":"", "label":"Picture Quality", "description":"Higher looks better and uses more CPU. Everything else is on the LCD tab.", "type":"number", "min":"30", "max":"95", "step":"5", "default":"80"},
 	];
 }
 
@@ -46,6 +43,11 @@ const LCD_READ_TIMEOUT_MS = 100;
 const LCD_FAILS_BEFORE_PAUSE = 3;
 const LCD_PAUSE_MS = 10000;
 const LCD_MIN_QUALITY = 30;
+// SignalRGB's LCD page chooses what gets drawn, its brightness and its render rate. This is only how
+// often a finished frame is collected. An unchanged frame still goes out now and then, in case the
+// screen lost power or the bridge restarted.
+const LCD_FRAME_RATE = 30;
+const LCD_RESEND_MS = 2000;
 
 const DES_IP = [
 	58, 50, 42, 34, 26, 18, 10, 2, 60, 52, 44, 36, 28, 20, 12, 4,
@@ -265,20 +267,30 @@ function lcdLog(msg) {
 	device.log(`[LianLiLCD] ${msg}`, {toFile: true});
 }
 
-function lcdFrameRate() {
-	return parseInt(FrameRate, 10) || 20;
-}
-
-let lcdQuality = 75;
+let lcdQuality = 80;
 let lcdLastFrame = 0;
 let lcdPausedUntil = 0;
 let lcdFails = 0;
 let lcdSent = 0;
+let lcdLastJpeg = null;
+let lcdLastSentAt = 0;
 
 function lcdStart() {
 	LCD.initialize({ width: LCD_WIDTH, height: LCD_HEIGHT });
-	lcdQuality = Number(JpegQuality) || 75;
-	device.setFrameRateTarget(lcdFrameRate());
+	lcdQuality = Number(JpegQuality) || 80;
+	device.setFrameRateTarget(LCD_FRAME_RATE);
+}
+
+function lcdSameAsLast(jpeg) {
+	if (!lcdLastJpeg || lcdLastJpeg.length !== jpeg.length) {
+		return false;
+	}
+	for (let i = 0; i < jpeg.length; i++) {
+		if (lcdLastJpeg[i] !== jpeg[i]) {
+			return false;
+		}
+	}
+	return true;
 }
 
 function lcdFirmware(reply) {
@@ -294,7 +306,7 @@ function lcdFirmware(reply) {
 
 function lcdRender() {
 	const now = Date.now();
-	if (now < lcdPausedUntil || now - lcdLastFrame < 1000 / lcdFrameRate()) {
+	if (now < lcdPausedUntil || now - lcdLastFrame < 1000 / LCD_FRAME_RATE) {
 		return;
 	}
 	lcdLastFrame = now;
@@ -307,7 +319,12 @@ function lcdRender() {
 		lcdLog(`Frame of ${jpeg.length} bytes is over the ${LCD_MAX_JPEG}-byte limit. JPEG quality now ${lcdQuality}.`);
 		return;
 	}
+	if (lcdSameAsLast(jpeg) && now - lcdLastSentAt < LCD_RESEND_MS) {
+		return;
+	}
 	if (lcdSendFrame(jpeg)) {
+		lcdLastJpeg = jpeg.slice();
+		lcdLastSentAt = now;
 		lcdFails = 0;
 		lcdSent++;
 		if (lcdSent === 1 || lcdSent % 1000 === 0) {
@@ -339,8 +356,6 @@ const TL_BRIGHTNESS = [[0, 0], [25, 10], [50, 30], [75, 40], [100, 100]];
 
 const TL_BRIDGE_PORT = 51872;
 const TL_BRIDGE_CHUNK = 48000;
-// The bridge may start after this plugin or restart, and static screens have no other traffic.
-const TL_BRIDGE_RESEND_MS = 2000;
 const TL_RELAY_PORT = 51873;
 const TL_BRIDGE_GONE_MS = 5000;
 
@@ -348,8 +363,6 @@ const tlPacket = new Array(TL_FRAME_BYTES).fill(0);
 let tlLastLength = 512;
 let tlNative = false;
 let tlSocket = null;
-let tlLastEncoded = "";
-let tlLastBridgeAt = 0;
 let tlFrameId = 0;
 let tlRelay = null;
 let tlHelloAt = 0;
@@ -357,6 +370,7 @@ let tlRelayPart = null;
 let tlRelayJpeg = "";
 let tlRelayBrightness = -1;
 let tlRelayed = 0;
+let tlWasOnBridge = false;
 
 function tlBrightness(percent) {
 	const v = Math.max(0, Math.min(100, Number(percent)));
@@ -400,12 +414,6 @@ function tlBridgeSend(text) {
 
 function tlBridgeFrame(jpeg) {
 	const encoded = tlBase64(jpeg);
-	const now = Date.now();
-	if (encoded === tlLastEncoded && now - tlLastBridgeAt < TL_BRIDGE_RESEND_MS) {
-		return true;
-	}
-	tlLastEncoded = encoded;
-	tlLastBridgeAt = now;
 	tlFrameId = (tlFrameId + 1) % 100000;
 	const count = Math.ceil(encoded.length / TL_BRIDGE_CHUNK);
 	for (let i = 0; i < count; i++) {
@@ -513,15 +521,17 @@ function tlWriteUsb(jpeg) {
 	return true;
 }
 
+// The backlight stays full, and the LCD tab's brightness slider dims the picture itself.
 function tlApplyBrightness() {
 	if (tlNative && !tlBridgeRunning()) {
-		lcdCommand(LCD_CMD_BRIGHTNESS, [tlBrightness(ScreenBrightness)]);
+		lcdCommand(LCD_CMD_BRIGHTNESS, [tlBrightness(100)]);
 	}
-	tlBridgeSend(`LLB1|${tlSerial()}|B|${Number(ScreenBrightness)}`);
+	tlBridgeSend(`LLB1|${tlSerial()}|B|100`);
 }
 
 export function Initialize() {
 	lcdStart();
+	device.setName(`Lian Li TL LCD ${tlSerial().slice(0, 4)}`);
 	lcdCommand(LCD_CMD_FRAME_RATE, [TL_FIRMWARE_FRAME_RATE]);
 	tlNative = lcdLastWriteOk;
 	if (tlNative) {
@@ -537,6 +547,12 @@ export function Render() {
 	if (tlNative) {
 		tlWriteRelayed();
 	}
+	// A new route has never seen the picture, so it shouldn't wait for the next resend.
+	const onBridge = tlBridgeRunning();
+	if (onBridge !== tlWasOnBridge) {
+		tlWasOnBridge = onBridge;
+		lcdLastJpeg = null;
+	}
 	lcdRender();
 }
 
@@ -551,6 +567,4 @@ export function Shutdown() {
 	tlRelay = null;
 }
 
-export function onFrameRateChanged() { device.setFrameRateTarget(lcdFrameRate()); }
-export function onJpegQualityChanged() { lcdQuality = Number(JpegQuality) || 75; }
-export function onScreenBrightnessChanged() { tlApplyBrightness(); }
+export function onJpegQualityChanged() { lcdQuality = Number(JpegQuality) || 80; }

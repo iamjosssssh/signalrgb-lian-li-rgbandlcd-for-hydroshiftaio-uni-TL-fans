@@ -57,6 +57,7 @@ function load(file, opts = {}) {
 		fanControlDisabled: () => state.fanDisabled,
 		getNormalizedFanlevel: (n) => state.levels[n],
 		setFrameRateTarget: (f) => { state.frameRate = f; },
+		setName: (n) => { state.name = n; },
 		bulk_transfer: (ep, data, len) => {
 			if (ep === 0x01) {
 				state.writes.push({ at: state.now, data: data.slice(), len });
@@ -88,7 +89,7 @@ function load(file, opts = {}) {
 	const params = {
 		LightingMode: "Canvas", forcedColor: "#009bde", UpdateRate: "15", HwEffect: "Static", HwSpeed: 5, HwColor: "#112233",
 		OnExit: "Keep Last Colors", shutdownColor: "#000000", FanControl: "SignalRGB Fan Control", FanFloor: 30, PumpControl: "Off (keep current speed)", PumpFloor: 50,
-		FrameRate: "20", JpegQuality: 75, ScreenBrightness: 100, ...opts.params,
+		JpegQuality: 80, ...opts.params,
 	};
 	const code = fs.readFileSync(path.join(dist, file), "utf8")
 		.replace(/^import .*$/gm, "")
@@ -368,6 +369,38 @@ console.log("--- stored effects");
 	ok(DEVICES.every((d) => heads.some((f) => isTarget(f, d.mac))), "Shutdown Color goes to every group");
 }
 
+console.log("--- color changes get confirmed");
+{
+	const p = load(TX, { macReply: macReply(), steadyColor: true, params: { FanControl: "Off (keep current speeds)" } });
+	p.api.Initialize();
+	run(p, 500, DEVICES);
+	const headersIn = (ms, devices) => {
+		p.state.writes.length = 0;
+		run(p, ms, devices);
+		return frames(p.state.writes).filter((f) => f.rf[1] === 0x20 && f.rf[18] === 0 && isTarget(f, DEVICES[0].mac)).length / 2;
+	};
+	const unconfirmed = headersIn(2000, DEVICES);
+	ok(unconfirmed >= 3, `no report yet: a new color is resent quickly (${unconfirmed} uploads in 2 s, against 1 once confirmed)`);
+	const fx = {};
+	for (const f of frames(p.state.writes).filter((x) => x.rf[1] === 0x20 && x.rf[18] === 0)) {
+		fx[DEVICES.find((d) => isTarget(f, d.mac)).mac] = f.rf.slice(14, 18);
+	}
+	const reported = DEVICES.map((d) => ({ ...d, fx: fx[d.mac] || d.fx }));
+	run(p, 300, reported);
+	ok(p.state.logs.some((l) => l.includes("Landed")), "the device's report is noticed");
+	const confirmed = headersIn(4000, reported);
+	ok(confirmed <= 3, `once confirmed it drops back to a slow refresh (${confirmed} uploads in 4 s)`);
+}
+{
+	const p = load(TX, { macReply: macReply(), steadyColor: true, params: { FanControl: "Off (keep current speeds)" } });
+	p.api.Initialize();
+	run(p, 12000, DEVICES);
+	p.state.writes.length = 0;
+	run(p, 4000, DEVICES);
+	const uploads = frames(p.state.writes).filter((f) => f.rf[1] === 0x20 && f.rf[18] === 0 && isTarget(f, DEVICES[0].mac)).length / 2;
+	ok(uploads <= 3, `a device that never reports doesn't get hammered forever (${uploads} uploads in 4 s)`);
+}
+
 console.log("--- safety layer rejects forged frames");
 {
 	const p = load(TX, { macReply: macReply() });
@@ -489,7 +522,8 @@ const opcode = (w) => decrypt(w.data.slice(0, 512))[0];
 	const p = load(TL_LCD);
 	p.api.Initialize();
 	ok(p.state.lcdInit.width === 400 && p.state.lcdInit.height === 400, "asks SignalRGB for 400x400");
-	ok(p.state.frameRate === 20, "uses the Frame Rate setting");
+	ok(p.state.frameRate === 30, "collects frames at 30 a second");
+	ok(/^Lian Li TL LCD \w{4}$/.test(p.state.name || ""), "each screen gets a name that tells it apart");
 	ok(p.state.writes.map(opcode).join() === [0x0f, 0x0a, 0x0e].join(), "init sends only frame rate, version and brightness");
 	p.state.writes.length = 0;
 	run(p, 500);
@@ -498,9 +532,17 @@ const opcode = (w) => decrypt(w.data.slice(0, 512))[0];
 	const jpegLen = (decrypt(w.data.slice(0, 512))[8] << 24) | (decrypt(w.data.slice(0, 512))[9] << 16) | (decrypt(w.data.slice(0, 512))[10] << 8) | decrypt(w.data.slice(0, 512))[11];
 	ok(w.len === 102400 && w.data.length === 102400, "each frame is one 102400-byte write");
 	ok(jpegLen === 7 && w.data[512] === 0xff && w.data[513] === 0xd8 && w.data[518] === 0xd9 && w.data[519] === 0, "JPEG follows the header, zero padded");
-	ok(p.state.qualities[0] === 75, "asks for the JPEG Quality setting");
+	ok(p.state.qualities[0] === 80, "asks for the Picture Quality setting");
+	ok(p.state.writes.length === 1, `a still picture is sent once (${p.state.writes.length} in 500 ms)`);
+	run(p, 2000);
+	ok(p.state.writes.length === 2, `and again every 2 seconds in case the screen lost power (${p.state.writes.length} in 2.5 s)`);
+	p.state.writes.length = 0;
+	for (let i = 0; i < 1000; i += 50) {
+		p.state.frame = [0xff, 0xd8, i & 255, (i >> 8) & 255, 3, 0xff, 0xd9];
+		run(p, 50);
+	}
 	const count = p.state.writes.length;
-	ok(count <= 11 && count >= 8, `frame rate is held to about 20 per second in the plugin too (${count} in 500 ms)`);
+	ok(count >= 15 && count <= 21, `a changing picture goes out as it changes, held to the frame rate (${count} in 1 s with 20 changes)`);
 }
 {
 	const huge = new Array(110000).fill(1);

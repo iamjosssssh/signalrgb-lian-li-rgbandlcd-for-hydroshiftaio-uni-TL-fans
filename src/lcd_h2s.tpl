@@ -12,19 +12,16 @@ export function Documentation() { return ""; }
 export function Size() { return [1, 1]; }
 export function DeviceType() { return "lcd"; }
 export function Type() { return "rawusb"; }
+export function ImageUrl() { return "https://assets.signalrgb.com/devices/brands/lian-li/aios/hydroshift-ii-oled-curve.png"; }
 export function ConflictingProcesses() { return ["L-Connect 3.exe", "L-Connect-Service.exe"]; }
 export function Validate(endpoint) { return endpoint.interface === 0; }
 
 /* global
-FrameRate:readonly
 JpegQuality:readonly
-ScreenBrightness:readonly
 */
 export function ControllableParameters() {
 	return [
-		{"property":"FrameRate", "group":"", "label":"Frame Rate", "description":"Higher rates use more CPU.", "type":"combobox", "values":["5", "10", "15", "20", "30"], "default":"20"},
-		{"property":"JpegQuality", "group":"", "label":"JPEG Quality", "type":"number", "min":"30", "max":"95", "step":"5", "default":"75"},
-		{"property":"ScreenBrightness", "group":"", "label":"Screen Brightness", "type":"number", "min":"0", "max":"100", "step":"5", "default":"100"},
+		{"property":"JpegQuality", "group":"", "label":"Picture Quality", "description":"Higher looks better and uses more CPU. Everything else is on the LCD tab.", "type":"number", "min":"30", "max":"95", "step":"5", "default":"80"},
 	];
 }
 
@@ -49,16 +46,13 @@ function lcdSendFrame(jpeg) {
 	return !!lcdReadReply(LCD_CMD_PUSH_JPG, H2S_ACK_TRIES);
 }
 
-function h2sBrightness() {
-	return Math.max(0, Math.min(100, Number(ScreenBrightness)));
-}
-
 export function Initialize() {
 	lcdStart();
 	lcdCommand(LCD_CMD_STOP_PLAY);
 	lcdCommand(LCD_CMD_STOP_CLOCK);
 	lcdLog(`Pump screen firmware: ${lcdFirmware(lcdCommand(LCD_CMD_GET_VER))}.`);
-	lcdCommand(LCD_CMD_BRIGHTNESS, [h2sBrightness()]);
+	// The backlight stays full, and the LCD tab's brightness slider dims the picture itself.
+	lcdCommand(LCD_CMD_BRIGHTNESS, [100]);
 }
 
 export function Render() {
@@ -68,6 +62,4 @@ export function Render() {
 // The screen keeps its last frame.
 export function Shutdown() {}
 
-export function onFrameRateChanged() { device.setFrameRateTarget(lcdFrameRate()); }
-export function onJpegQualityChanged() { lcdQuality = Number(JpegQuality) || 75; }
-export function onScreenBrightnessChanged() { lcdCommand(LCD_CMD_BRIGHTNESS, [h2sBrightness()]); }
+export function onJpegQualityChanged() { lcdQuality = Number(JpegQuality) || 80; }

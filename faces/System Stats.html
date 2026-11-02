@@ -1,0 +1,136 @@
+<html lang="en">
+    <head>
+        <title>System Stats</title>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta background="true" />
+
+        <meta description="Four live gauges for any sensors, over your background" />
+        <meta publisher="Community" />
+
+        <meta property="sensor1" label="Top Left" type="sensor" default="CPU TDie/TCtrl Temperature" />
+        <meta property="sensor2" label="Top Right" type="sensor" default="CPU Load" />
+        <meta property="sensor3" label="Bottom Left" type="sensor" default="GPU Core Temperature" />
+        <meta property="sensor4" label="Bottom Right" type="sensor" default="GPU Load" />
+        <meta property="accentColor" label="Gauge Color" type="color" default="#eb00ff" />
+        <meta property="textColor" label="Text Color" type="color" default="#f8f8ff" />
+        <meta property="dimBackground" label="Dim Background" type="boolean" default="true" />
+
+        <style>
+            html, body {
+                margin: 0;
+                padding: 0;
+                width: 100%;
+                height: 100%;
+                background: transparent;
+                overflow: hidden;
+            }
+            canvas {
+                display: block;
+                width: 100%;
+                height: 100%;
+            }
+        </style>
+    </head>
+
+    <body>
+        <canvas id="stats"></canvas>
+
+        <script>
+            const canvas = document.getElementById("stats");
+            const ctx = canvas.getContext("2d");
+            const REFRESH_MS = 1000;
+            const GAUGE_START = Math.PI * 0.75;
+            const GAUGE_SWEEP = Math.PI * 1.5;
+
+            // Sensors that report no range: a percent runs 0-100, a temperature 20-100.
+            function rangeOf(info) {
+                if (info.max > info.min) {
+                    return [info.min, info.max];
+                }
+                return /c|°/i.test(info.units || "") ? [20, 100] : [0, 100];
+            }
+
+            function shortName(name) {
+                return String(name)
+                    .replace(" TDie/TCtrl", "")
+                    .replace(" Core", "")
+                    .replace("Temperature", "Temp")
+                    .replace("Utilization", "Load");
+            }
+
+            function drawGauge(x, y, size, name) {
+                const info = engine.getSensorValue(name);
+                const radius = size * 0.4;
+                const line = size * 0.075;
+                const cx = x + size / 2;
+                const cy = y + size / 2;
+
+                ctx.lineCap = "round";
+                ctx.lineWidth = line;
+                ctx.strokeStyle = "rgba(255,255,255,0.18)";
+                ctx.beginPath();
+                ctx.arc(cx, cy, radius, GAUGE_START, GAUGE_START + GAUGE_SWEEP);
+                ctx.stroke();
+
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = textColor;
+
+                if (info) {
+                    const [low, high] = rangeOf(info);
+                    const fraction = Math.max(0, Math.min(1, (info.value - low) / (high - low)));
+                    ctx.strokeStyle = accentColor;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, radius, GAUGE_START, GAUGE_START + GAUGE_SWEEP * Math.max(fraction, 0.001));
+                    ctx.stroke();
+
+                    ctx.font = `bold ${Math.round(size * 0.27)}px Arial`;
+                    ctx.fillText(`${Math.round(info.value)}`, cx, cy - size * 0.02);
+                    ctx.font = `${Math.round(size * 0.1)}px Arial`;
+                    ctx.fillText(info.units || "", cx, cy + size * 0.17);
+                } else {
+                    ctx.font = `bold ${Math.round(size * 0.27)}px Arial`;
+                    ctx.fillText("--", cx, cy - size * 0.02);
+                }
+
+                ctx.font = `${Math.round(size * 0.095)}px Arial`;
+                ctx.fillText(shortName(name), cx, y + size * 0.92, size * 0.95);
+            }
+
+            function draw() {
+                const width = window.innerWidth;
+                const height = window.innerHeight;
+                if (canvas.width !== width || canvas.height !== height) {
+                    canvas.width = width;
+                    canvas.height = height;
+                }
+                ctx.clearRect(0, 0, width, height);
+                if (dimBackground == true) {
+                    ctx.fillStyle = "rgba(0,0,0,0.45)";
+                    ctx.fillRect(0, 0, width, height);
+                }
+                const size = Math.min(width, height) / 2;
+                const left = (width - size * 2) / 2;
+                const top = (height - size * 2) / 2;
+                drawGauge(left, top, size, sensor1);
+                drawGauge(left + size, top, size, sensor2);
+                drawGauge(left, top + size, size, sensor3);
+                drawGauge(left + size, top + size, size, sensor4);
+            }
+
+            function onsensor1Changed() { draw(); }
+            function onsensor2Changed() { draw(); }
+            function onsensor3Changed() { draw(); }
+            function onsensor4Changed() { draw(); }
+            function onaccentColorChanged() { draw(); }
+            function ontextColorChanged() { draw(); }
+            function ondimBackgroundChanged() { draw(); }
+
+            function onReady() {
+                draw();
+                setInterval(draw, REFRESH_MS);
+            }
+        </script>
+    </body>
+</html>

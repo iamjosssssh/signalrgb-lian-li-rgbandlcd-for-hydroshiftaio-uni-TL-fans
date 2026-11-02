@@ -11,6 +11,7 @@ Runs Lian Li's L-Wireless gear from SignalRGB instead of L-Connect 3:
 | Stored effects | Devices play an animation by themselves, smoothly | Same hardware, simulation-tested upload |
 | HydroShift II LCD-S screen | SignalRGB's LCD page, USB `1CBE:A034` | Firmware `lianlih2s_0001_0027` |
 | TL Wireless LCD screens | SignalRGB's LCD page, USB `1CBE:0006`, with the bridge program | Firmware `tlv2_2024091005_01` |
+| System Stats LCD face | Four live gauges for any SignalRGB sensor | TL Wireless LCD |
 
 Community project, not affiliated with Lian Li or WhirlwindFX. Use at your own risk.
 
@@ -26,6 +27,7 @@ Built on [SignalRGB-HydroShift-II-TL-Wireless](https://github.com/ShkourBashtawi
 3. In an admin PowerShell, run `scripts\install-takeover.ps1`.
 4. Restart SignalRGB. Enable both **Lian Li Wireless** and **Lian Li Wireless Monitor**.
 5. To use curves, set **Fan Speeds** on the Lian Li Wireless device to `SignalRGB Fan Control`, then set the curves on the Cooling page.
+6. For the System Stats face, copy `faces\*.html` to `Documents\WhirlwindFX\LCDFaces` and restart SignalRGB. Sideloaded faces need SignalRGB Pro.
 
 If you run the bundled OpenRGB through L-Connect, it can also corrupt SignalRGB's RAM scan. See the [motherboard repo](https://github.com/iamjosssssh/signalrgb-msi-x870e-godlike-xedition-controller) for the fix.
 
@@ -41,6 +43,29 @@ Only one program can hold the dongle and screens, so `scripts\lconnect-handoff.p
 | L-Connect 3 window open | L-Connect, until the window closes |
 
 Undo with `scripts\uninstall-takeover.ps1`, and remove the `LianLiLocal` folder.
+
+## Changing what a screen shows
+
+Each screen has its own page: **Devices**, the screen, then the **LCD** tab. The fan screens are named by the start of their serial number, and **Settings** on the same page has **Rename Device**.
+
+| You want | Where |
+|---|---|
+| Clock, text, logo, one sensor, or four gauges | **LCD Face**, **Select** |
+| More faces, including CPU and GPU dashboards | **Discover**, **LCD Blocks** |
+| A photo or GIF | **Background Type**: `image`, then **Browse** (PNG, JPG, BMP, GIF). Faces draw on top of it |
+| The current lighting effect | **Background Type**: `canvas` |
+| Brightness, rotation, render rate | Top of the LCD tab |
+
+The `media` background type is the thumbnail of whatever is playing on the PC, not a file.
+
+### Video
+
+SignalRGB's LCD system doesn't play video: `image` rejects MP4, and its face engine has no `<video>` element. `tools\video-to-lcd-gif.ps1` turns a clip into a looping GIF in `Documents\WhirlwindFX\LCD Media`, ready for **Browse**. It needs FFmpeg (`winget install Gyan.FFmpeg`).
+
+```powershell
+tools\video-to-lcd-gif.ps1 clip.mp4 -Seconds 15 -Fps 15
+tools\video-to-lcd-gif.ps1 -InstallSendTo   # adds it to Explorer's Send To menu
+```
 
 ## Fan screens and the bridge
 
@@ -60,6 +85,7 @@ SignalRGB opens a raw USB handle on only one of several identical devices, and g
 
 ## Limits
 
+- Wireless lighting isn't instant. Uploads get lost on the radio, so a new color is resent until the device reports it, which takes about 2 seconds and now and then up to 8. Each device only reports about once a second, so the lights can change a little before the report shows it.
 - Live animated effects share about 15 updates per second across all groups, so each gets only a few. For smooth motion use **Lighting Mode: Hardware Effect**.
 - After a power cycle the devices show L-Connect's saved effect until SignalRGB takes over.
 - Screens keep their last frame when SignalRGB closes.

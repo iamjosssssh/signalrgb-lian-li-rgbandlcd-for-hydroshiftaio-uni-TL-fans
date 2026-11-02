@@ -11,6 +11,7 @@ export function ProductId() { return 0x8041; }
 export function Publisher() { return "Community"; }
 export function Documentation() { return ""; }
 export function Type() { return "rawusb"; }
+export function ImageUrl() { return "https://assets.signalrgb.com/devices/brands/lian-li/fan-controllers/uni-hub-controller.png"; }
 export function Size() { return [1, 1]; }
 export function DefaultPosition() { return [0, 0]; }
 export function DefaultScale() { return 1.0; }
@@ -1104,7 +1105,7 @@ function llsCoolingProblem(group, rec) {
 }
 
 
-const POLL_MS = 1000;
+const POLL_MS = 250;
 const STATUS_MS = 60000;
 const MONITOR_PORT = 51871;
 // A device sometimes misses one reply (radio noise), so remember it for a while.

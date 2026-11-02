@@ -12,6 +12,7 @@ export function ProductId() { return 0x8040; }
 export function Publisher() { return "Community"; }
 export function Documentation() { return ""; }
 export function Type() { return "rawusb"; }
+export function ImageUrl() { return "https://assets.signalrgb.com/devices/brands/lian-li/fan-controllers/uni-hub-controller.png"; }
 export function Size() { return [48, 18]; }
 export function DefaultPosition() { return [16, 70]; }
 export function DefaultScale() { return 3.0; }
@@ -58,6 +59,13 @@ import udp from "@SignalRGB/udp";
 
 const HEARTBEAT_MS = 1000;
 const REFRESH_MS = 2000;
+const CONFIRM_RETRY_MS = 130;
+const CONFIRM_WINDOW_MS = 10000;
+const RETRY_REPEATS = 3;
+const RETRY_GAP_MS = 10;
+
+// A solid color is still a one-frame animation to the device. A short frame means a new upload has no long frame to wait out.
+const SOLID_FRAME_MS = LL_HW_FRAME_MS;
 const PROBE_MS = 150;
 const PROBE_TRIES_BEFORE_NOTICE = 8;
 const MONITOR_PORT = 51871;
@@ -147,6 +155,7 @@ export function Render() {
 	fanTick(now);
 	reportFans();
 	checkCooling(now);
+	logLanding(now);
 	logStatus(now);
 
 	const groups = groupList();
@@ -367,27 +376,49 @@ function sendGroupIfDue(group, now) {
 	const colors = grabColors(a, b);
 	const signature = colors.join(",");
 	const last = sent[group.key];
-	if (last && last.signature === signature && now - last.at < REFRESH_MS) {
+	const changed = !last || last.signature !== signature;
+	// Uploads get lost on the radio, so a new color is resent quickly until the device reports it.
+	const unconfirmed = !changed && !last.landed && now - last.changedAt < CONFIRM_WINDOW_MS;
+	if (!changed && now - last.at < (unconfirmed ? CONFIRM_RETRY_MS : REFRESH_MS)) {
 		return false;
 	}
-	const upload = llBuildRgbUpload([colors], 5000, null);
-	sent[group.key] = { signature, at: now, count: (last ? last.count : 0) + 1, color: colors[0], effect: upload.effectIndex };
-	safely(() => sendUpload(group, upload));
+	const upload = llBuildRgbUpload([colors], SOLID_FRAME_MS, null);
+	sent[group.key] = {
+		signature,
+		at: now,
+		count: (last ? last.count : 0) + 1,
+		color: colors[0],
+		effect: upload.effectIndex,
+		changedAt: changed ? now : last.changedAt,
+		landed: changed ? false : last.landed,
+		sends: changed ? 1 : last.sends + 1,
+	};
+	// Animations replace each upload right away, so only a color that stays put gets the slower, surer form.
+	safely(() => sendUpload(group, upload, unconfirmed));
 	return true;
 }
 
 function sendAllOnce(color) {
 	for (const group of groupList()) {
 		const [a, b] = layout.ranges[group.key];
-		safely(() => sendUpload(group, llBuildRgbUpload([grabColors(a, b, color)], 5000, null)));
+		safely(() => sendUpload(group, llBuildRgbUpload([grabColors(a, b, color)], SOLID_FRAME_MS, null)));
 	}
 }
 
-function sendUpload(group, upload) {
+// A retry repeats each frame with gaps between, because a repeat sent straight away is lost along with the first.
+function sendUpload(group, upload, sure = false) {
 	for (let index = 0; index < upload.packetCount; index++) {
 		const rf = llRgbPacket(upload, group.macBytes, llsRoster.masterBytes, index);
+		if (sure && index === 1) {
+			device.pause(RETRY_GAP_MS);
+		}
 		sendRf(rf, group.ch, group.rx);
-		if (index === 0) {
+		if (sure) {
+			for (let repeat = 1; repeat < RETRY_REPEATS; repeat++) {
+				device.pause(RETRY_GAP_MS);
+				sendRf(rf, group.ch, group.rx);
+			}
+		} else if (index === 0) {
 			device.pause(2);
 			sendRf(rf, group.ch, group.rx);
 		}
@@ -708,6 +739,21 @@ function checkCooling(now) {
 			llsMessage("lls_cooling", `Cooling warning: ${shown}`, "Check the device. L-Connect Service can take over if needed.");
 		} else {
 			llsClearMessage("lls_cooling");
+		}
+	}
+}
+
+// Logs how long a new color took to reach each device, going by what the device reports.
+function logLanding(now) {
+	for (const group of groupList()) {
+		const out = sent[group.key];
+		if (!out || out.landed) {
+			continue;
+		}
+		const rec = recordFor(group);
+		if (rec && !rec.stale && sameEffect(rec, { effectIndex: out.effect })) {
+			out.landed = true;
+			llsLog(`Landed ${group.label}: ${now - out.changedAt} ms, ${out.sends} uploads.`);
 		}
 	}
 }
