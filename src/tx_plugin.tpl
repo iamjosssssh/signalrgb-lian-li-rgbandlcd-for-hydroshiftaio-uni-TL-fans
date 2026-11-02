@@ -12,7 +12,7 @@ export function ProductId() { return 0x8040; }
 export function Publisher() { return "Community"; }
 export function Documentation() { return ""; }
 export function Type() { return "rawusb"; }
-export function ImageUrl() { return "https://assets.signalrgb.com/devices/brands/lian-li/fan-controllers/uni-hub-controller.png"; }
+export function ImageUrl() { return "https://raw.githubusercontent.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans/main/assets/devices/lian-li-dongle.png"; }
 export function Size() { return [48, 18]; }
 export function DefaultPosition() { return [16, 70]; }
 export function DefaultScale() { return 3.0; }

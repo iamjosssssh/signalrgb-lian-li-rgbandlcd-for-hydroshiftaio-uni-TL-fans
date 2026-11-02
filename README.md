@@ -22,12 +22,21 @@ Built on [SignalRGB-HydroShift-II-TL-Wireless](https://github.com/ShkourBashtawi
 
 ## Install
 
-1. Copy `dist\*.js` to `Documents\WhirlwindFX\Plugins\LianLiLocal`.
-2. Run `bridge\build.ps1`, then start `bridge\LianLiLcdBridge.exe`. It needs to run at every sign-in if you have more than one TL LCD fan.
-3. In an admin PowerShell, run `scripts\install-takeover.ps1`.
-4. Restart SignalRGB. Enable both **Lian Li Wireless** and **Lian Li Wireless Monitor**.
-5. To use curves, set **Fan Speeds** on the Lian Li Wireless device to `SignalRGB Fan Control`, then set the curves on the Cooling page.
-6. For the System Stats face, copy `faces\*.html` to `Documents\WhirlwindFX\LCDFaces` and restart SignalRGB. Sideloaded faces need SignalRGB Pro.
+1. In SignalRGB, open **Settings**, then **Add-ons**, paste this repo's URL and restart SignalRGB:
+
+   ```
+   https://github.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans
+   ```
+
+2. Run the one-time setup from PowerShell. It asks for admin rights:
+
+   ```powershell
+   & (Get-ChildItem "$env:LOCALAPPDATA\WhirlwindFX\SignalRgb\cache\addons" -Recurse -Filter setup-lianli.ps1 | Select-Object -First 1).FullName
+   ```
+
+3. To use curves, set **Fan Speeds** on the Lian Li Wireless device to `SignalRGB Fan Control`, then set the curves on the Cooling page.
+
+The add-on alone installs the plugins. Plugins can't start programs, so step 2 does three things they can't. It stops L-Connect at each sign-in once SignalRGB is up, because only one program can hold the dongle. It builds the screen bridge and starts it at sign-in, which you need with more than one TL LCD fan. And it installs the System Stats face, which needs SignalRGB Pro. `setup-lianli.ps1 -DryRun` lists the steps without changing anything, and `-Remove` undoes them, apart from the face.
 
 If you run the bundled OpenRGB through L-Connect, it can also corrupt SignalRGB's RAM scan. See the [motherboard repo](https://github.com/iamjosssssh/signalrgb-msi-x870e-godlike-xedition-controller) for the fix.
 
@@ -42,7 +51,7 @@ Only one program can hold the dongle and screens, so `scripts\lconnect-handoff.p
 | SignalRGB closed for 15 seconds | L-Connect Service again |
 | L-Connect 3 window open | L-Connect, until the window closes |
 
-Undo with `scripts\uninstall-takeover.ps1`, and remove the `LianLiLocal` folder.
+Undo with `setup-lianli.ps1 -Remove`, then remove the add-on.
 
 ## Changing what a screen shows
 

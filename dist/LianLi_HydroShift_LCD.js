@@ -12,7 +12,7 @@ export function Documentation() { return ""; }
 export function Size() { return [1, 1]; }
 export function DeviceType() { return "lcd"; }
 export function Type() { return "rawusb"; }
-export function ImageUrl() { return "https://assets.signalrgb.com/devices/brands/lian-li/aios/hydroshift-ii-oled-curve.png"; }
+export function ImageUrl() { return "https://raw.githubusercontent.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans/main/assets/devices/hydroshift-lcd.png"; }
 export function ConflictingProcesses() { return ["L-Connect 3.exe", "L-Connect-Service.exe"]; }
 export function Validate(endpoint) { return endpoint.interface === 0; }
 
