@@ -70,6 +70,7 @@ const PROBE_MS = 150;
 const PROBE_TRIES_BEFORE_NOTICE = 8;
 const MONITOR_PORT = 51871;
 const MONITOR_STALE_MS = 20000;
+const STEADY_REPORTS = 3;
 const STATUS_MS = 30000;
 
 // Fans drop to their own default speed if commands stop, so each group gets one a second.
@@ -97,6 +98,8 @@ let lastFrame = null;
 let nextGroup = 0;
 let monitor = null;
 let monitorAt = 0;
+let lastCounted = null;
+let recordCounts = {};
 let socket = null;
 let guardTripped = false;
 let lowSince = {};
@@ -265,11 +268,34 @@ function recordFor(group) {
 	return monitorRecords().find((d) => d.mac === group.mac) || null;
 }
 
+// The RX can return a record while it's being updated, with part of the address or type zeroed.
+// So a record only counts once it has looked the same in several reports running.
+function steadyRecords() {
+	if (monitor === lastCounted) {
+		return [];
+	}
+	lastCounted = monitor;
+	const counts = {};
+	const steady = [];
+	for (const rec of monitorRecords()) {
+		if (rec.stale) {
+			continue;
+		}
+		const id = [rec.mac, rec.master, rec.rx, rec.ch, rec.type, rec.fans].join("|");
+		counts[id] = (recordCounts[id] || 0) + 1;
+		if (counts[id] >= STEADY_REPORTS) {
+			steady.push(rec);
+		}
+	}
+	recordCounts = counts;
+	return steady;
+}
+
 // Groups stay once found, so a device that misses a few replies keeps its speed commands.
 function syncRoster() {
 	let added = false;
-	for (const rec of monitorRecords()) {
-		if (rec.stale || rec.master !== llsRoster.master) {
+	for (const rec of steadyRecords()) {
+		if (rec.master !== llsRoster.master) {
 			continue;
 		}
 		const { group, problem } = llsGroupFromRecord(rec);
@@ -495,13 +521,15 @@ function pumpShape(group) {
 }
 
 // The speed to put a group back to: duties for fans, RPM for a pump. A fan that was barely turning
-// goes back at 60% instead, and a pump whose speed isn't plausible goes back to full speed.
+// goes back at 60% instead. A pump whose speed isn't plausible goes back to full speed, and one
+// never goes back below its floor, so a floor of 100% holds after SignalRGB closes too.
 function handBack(group, rec) {
 	if (!rec) {
 		return null;
 	}
 	if (group.kind === "pump") {
-		return rec.pumpRpm >= LLS_PUMP_MIN_SAFE_RPM ? rec.pumpRpm : LL_PUMP_RANGE[pumpShape(group)][1];
+		const shape = pumpShape(group);
+		return rec.pumpRpm >= LLS_PUMP_MIN_SAFE_RPM ? Math.max(rec.pumpRpm, llPumpRpmFromLevel(fanFloor(group), shape)) : LL_PUMP_RANGE[shape][1];
 	}
 	return rec.pwm ? llSafeHandBack(rec.pwm, group.fans) : null;
 }

@@ -309,6 +309,24 @@ console.log("--- fan control");
 	ok(fr.length === 1 && timerOf(fr[0]) === 750, `shutdown hands the pump back at its earlier 2450 rpm (timer ${fr[0] && timerOf(fr[0])})`);
 }
 {
+	const pumpDevices = DEVICES.map((d) => (d.type === 11 ? { ...d, pumpRpm: 2450, rpm: [0, 0, 0, 2450] } : d));
+	const timerOf = (f) => (f.rf[46] << 8) | f.rf[47];
+	const p = load(TX, { macReply: macReply(), params: { FanControl: "Off (keep current speeds)", PumpControl: "SignalRGB Fan Control", PumpFloor: 100 } });
+	p.api.Initialize();
+	run(p, 500, pumpDevices);
+	p.state.levels[Object.keys(p.state.fanControls)[0]] = 0.3;
+	run(p, 5000, pumpDevices);
+	p.state.writes.length = 0;
+	run(p, 5000, pumpDevices);
+	const pump = frames(p.state.writes).filter((f) => f.rf[1] === 0x21);
+	const full = timerOf(pump[pump.length - 1]);
+	ok(pump.length >= 3 && full < 234, `a 100% floor keeps the pump at full speed on a 30% curve (timer ${full})`);
+	p.state.writes.length = 0;
+	p.api.Shutdown(false);
+	const bye = frames(p.state.writes).filter((f) => f.rf[1] === 0x21);
+	ok(bye.length === 1 && timerOf(bye[0]) === full, `and it stays at full speed after SignalRGB closes (timer ${bye[0] && timerOf(bye[0])})`);
+}
+{
 	const p = load(TX, { macReply: macReply() });
 	p.api.Initialize();
 	run(p, 6000, DEVICES);
@@ -367,6 +385,39 @@ console.log("--- stored effects");
 	p.api.Shutdown(false);
 	const heads = frames(p.state.writes).filter((f) => f.rf[1] === 0x20 && f.rf[18] === 0);
 	ok(DEVICES.every((d) => heads.some((f) => isTarget(f, d.mac))), "Shutdown Color goes to every group");
+}
+
+console.log("--- records caught mid-update");
+{
+	const p = load(TX, { macReply: macReply(), params: { FanControl: "Off (keep current speeds)" } });
+	const found = () => p.state.logs.filter((l) => l.includes("Found ")).length;
+	p.api.Initialize();
+	run(p, 500, DEVICES);
+	ok(found() === DEVICES.length, `every device is found (${found()})`);
+	const garbled = { ...DEVICES[4], mac: "10:00:00:00:00:00" };
+	const flash = (times) => {
+		for (let i = 0; i < times; i++) {
+			p.state.handlers.message(JSON.stringify({ kind: "lls-monitor", t: p.state.now, devices: DEVICES.concat(garbled) }));
+			p.api.Render();
+			p.state.now += 16;
+		}
+		run(p, 500, DEVICES);
+	};
+	flash(2);
+	ok(found() === DEVICES.length, "a garbled address seen twice doesn't become a device");
+	flash(2);
+	ok(found() === DEVICES.length, "and its count starts over when it goes away");
+	const moved = DEVICES.map((d) => (d.mac === DEVICES[0].mac ? { ...d, rx: 9 } : d));
+	p.state.writes.length = 0;
+	p.state.handlers.message(JSON.stringify({ kind: "lls-monitor", t: p.state.now, devices: moved }));
+	p.api.Render();
+	p.state.now += 16;
+	run(p, 3000, DEVICES);
+	const toFirst = frames(p.state.writes).filter((f) => f.rf[1] !== 0x14 && isTarget(f, DEVICES[0].mac));
+	ok(toFirst.length > 0 && toFirst.every((f) => f.usb[3] === DEVICES[0].rx), `one odd report doesn't move a device to another slot (${toFirst.length} frames checked)`);
+	const added = { ...DEVICES[4], mac: "10:00:00:00:00:07", rx: 7 };
+	run(p, 100, DEVICES.concat(added));
+	ok(found() === DEVICES.length + 1, "a device that really appears is still picked up");
 }
 
 console.log("--- color changes get confirmed");
@@ -517,11 +568,20 @@ function decrypt(enc) {
 }
 
 console.log("--- fan screen plugin");
+{
+	const p = load(TL_LCD);
+	p.api.Initialize();
+	const atInit = p.state.writes.length;
+	run(p, 20000);
+	ok(!p.state.lcdInit && p.state.writes.length === atInit, "a screen waits for SignalRGB's face scan, so its saved face isn't reset");
+	run(p, 11000);
+	ok(p.state.lcdInit && p.state.lcdInit.width === 400 && p.state.lcdInit.height === 400 && p.state.writes.length > atInit, "then asks SignalRGB for 400x400 and starts showing frames");
+}
 const opcode = (w) => decrypt(w.data.slice(0, 512))[0];
 {
 	const p = load(TL_LCD);
 	p.api.Initialize();
-	ok(p.state.lcdInit.width === 400 && p.state.lcdInit.height === 400, "asks SignalRGB for 400x400");
+	p.state.now += 30000;
 	ok(p.state.frameRate === 30, "collects frames at 30 a second");
 	ok(/^Lian Li TL LCD \w{4}$/.test(p.state.name || ""), "each screen gets a name that tells it apart");
 	ok(p.state.writes.map(opcode).join() === [0x0f, 0x0a, 0x0e].join(), "init sends only frame rate, version and brightness");
@@ -550,6 +610,7 @@ const opcode = (w) => decrypt(w.data.slice(0, 512))[0];
 	huge[1] = 0xd8;
 	const p = load(TL_LCD, { frame: huge });
 	p.api.Initialize();
+	p.state.now += 30000;
 	p.state.writes.length = 0;
 	run(p, 500);
 	ok(p.state.writes.length === 0, "a frame over the 101888-byte limit is dropped");
@@ -558,6 +619,7 @@ const opcode = (w) => decrypt(w.data.slice(0, 512))[0];
 {
 	const p = load(TL_LCD, { frame: [1, 2, 3] });
 	p.api.Initialize();
+	p.state.now += 30000;
 	p.state.writes.length = 0;
 	run(p, 300);
 	ok(p.state.writes.length === 0, "anything that isn't a JPEG is never sent");
@@ -565,6 +627,7 @@ const opcode = (w) => decrypt(w.data.slice(0, 512))[0];
 {
 	const p = load(TL_LCD);
 	p.api.Initialize();
+	p.state.now += 30000;
 	p.state.dropWrites = true;
 	p.state.writes.length = 0;
 	run(p, 1000);
@@ -580,6 +643,7 @@ console.log("--- fan screens without a USB handle");
 	big[1] = 0xd8;
 	const p = load(TL_LCD, { noHandle: true, frame: big });
 	p.api.Initialize();
+	p.state.now += 30000;
 	const writesAtInit = p.state.writes.length;
 	ok(writesAtInit === 1, `stops writing to USB once it knows it has no handle (${writesAtInit} write)`);
 	ok(p.state.bridge.some((m) => m === "LLB1|ABCDEF0123456789|B|100"), "sends brightness to the bridge");
@@ -602,6 +666,7 @@ const frameWrites = (p) => p.state.writes.filter((w) => w.len === 102400);
 {
 	const p = load(TL_LCD);
 	p.api.Initialize();
+	p.state.now += 30000;
 	p.state.writes.length = 0;
 	p.state.bridge.length = 0;
 	run(p, 300);
@@ -646,17 +711,19 @@ console.log("--- pump screen plugin");
 	};
 	const p = load(H2S_LCD, { onWrite: ackFor });
 	p.api.Initialize();
-	ok(p.state.lcdInit.width === 480 && p.state.lcdInit.height === 480, "asks SignalRGB for 480x480");
+	p.state.now += 30000;
 	const op = (w) => decrypt(w.data.slice(0, 504))[0];
 	ok(p.state.writes.map(op).join() === [0x7b, 0x34, 0x0a, 0x0e].join(), "init matches the sequence tested on this model");
 	p.state.writes.length = 0;
 	run(p, 500);
 	ok(p.state.writes.length > 0 && p.state.writes.every((w) => op(w) === 0x65), "frames use only the JPEG command");
 	ok(p.state.writes[0].data.length === 512 + 7 && p.state.writes[0].data[512] === 0xff, "header and JPEG go out in one write");
+	ok(p.state.lcdInit.width === 480 && p.state.lcdInit.height === 480, "asks SignalRGB for 480x480");
 }
 {
 	const p = load(H2S_LCD);
 	p.api.Initialize();
+	p.state.now += 30000;
 	p.state.writes.length = 0;
 	run(p, 20000);
 	ok(p.state.writes.length <= 6, `no acknowledgements: backs off instead of hammering the pump (${p.state.writes.length} frames in 20 s)`);

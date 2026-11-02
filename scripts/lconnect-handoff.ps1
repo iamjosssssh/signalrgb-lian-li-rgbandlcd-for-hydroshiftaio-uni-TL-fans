@@ -23,9 +23,21 @@ function Get-Wanted($signalRgbRunning, $lconnectWindowOpen, $goneSeconds) {
     return ''
 }
 
+# Optional checks for one machine, kept beside this script and out of the project. If the file
+# defines Invoke-LocalCheck, it runs on every pass, and a failure in it can't stop the handoff.
+$localChecks = Join-Path $PSScriptRoot 'handoff.local.ps1'
+if (-not $Once -and (Test-Path $localChecks)) {
+    try { . $localChecks }
+    catch { Mark "local checks did not load: $_" }
+}
+
 Mark 'started'
 $lastSeen = Get-Date
 do {
+    if (-not $Once -and (Get-Command Invoke-LocalCheck -ErrorAction SilentlyContinue)) {
+        try { Invoke-LocalCheck }
+        catch { Mark "local checks failed: $_" }
+    }
     $signalRgb = [bool](Get-Process SignalRgb -ErrorAction SilentlyContinue)
     $window = [bool](Get-Process 'L-Connect 3' -ErrorAction SilentlyContinue)
     if ($signalRgb) { $lastSeen = Get-Date }

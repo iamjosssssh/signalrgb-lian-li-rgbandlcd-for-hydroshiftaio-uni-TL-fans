@@ -78,6 +78,8 @@ SignalRGB opens a raw USB handle on only one of several identical devices, and g
 - `src/guard.cjs` checks every wireless write. Only clock, RGB and speed frames can leave the dongle, and only to devices the RX reports as bound to your own dongle, so a neighbour's fans are never touched.
 - Reboot, bind, firmware, LCD picture and LCD theme-switch frames are rejected, not just unused.
 - Speed frames can't stop a fan or go below its minimum, and can't take the pump below 2000 rpm. They stay on the channel each device already uses.
+- The RX can return a record while it's being updated, with part of the address zeroed. A device only counts once it has looked the same in three reports running.
+- For a pump that always runs flat out, set **Lowest Pump Speed** to 100 and pick the `Pump` preset on the Cooling page.
 - The fan-speed frame's pump slot changes the speed the pump reports but not its real speed, so this plugin doesn't use it. Pump speed goes in the AIO parameter block, without the command that switches the screen to its sensor theme.
 - An uncertain curve value holds the last speed. No usable value for 30 seconds goes to full speed. If SignalRGB closes, fans get their earlier speed back.
 - The screen code can build only frame, brightness, frame-rate, version, stop-play and stop-clock commands. The startup-image (flash), reboot and desktop-mode commands can't be sent. Write timeouts are 2 seconds, because a shorter one can wedge the screen until a power cycle.
@@ -87,7 +89,8 @@ SignalRGB opens a raw USB handle on only one of several identical devices, and g
 
 - Wireless lighting isn't instant. Uploads get lost on the radio, so a new color is resent until the device reports it, which takes about 2 seconds and now and then up to 8. Each device only reports about once a second, so the lights can change a little before the report shows it.
 - Live animated effects share about 15 updates per second across all groups, so each gets only a few. For smooth motion use **Lighting Mode: Hardware Effect**.
-- After a power cycle the devices show L-Connect's saved effect until SignalRGB takes over.
+- After a power cycle the devices show L-Connect's saved effect until SignalRGB takes over, and the pump runs at L-Connect's saved speed. The same applies once L-Connect takes back over after SignalRGB closes.
+- Screens start 30 seconds after SignalRGB does. SignalRGB looks up a screen's saved face when the screen starts, and resets it to the default for good if its face list isn't ready, which takes about 10 seconds.
 - Screens keep their last frame when SignalRGB closes.
 - The Lian Li Wireless device must fit inside the canvas. Parts outside it read wrong colors, so check its position and scale on the Layouts page.
 

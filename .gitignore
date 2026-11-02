@@ -1,2 +1,3 @@
 *.log
 *.exe
+scripts/handoff.local.ps1

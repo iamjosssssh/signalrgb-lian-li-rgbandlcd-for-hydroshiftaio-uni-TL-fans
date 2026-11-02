@@ -48,6 +48,7 @@ const LCD_MIN_QUALITY = 30;
 // screen lost power or the bridge restarted.
 const LCD_FRAME_RATE = 30;
 const LCD_RESEND_MS = 2000;
+const LCD_FACE_SCAN_WAIT_MS = 30000;
 
 const DES_IP = [
 	58, 50, 42, 34, 26, 18, 10, 2, 60, 52, 44, 36, 28, 20, 12, 4,
@@ -274,11 +275,28 @@ let lcdFails = 0;
 let lcdSent = 0;
 let lcdLastJpeg = null;
 let lcdLastSentAt = 0;
+let lcdStartedAt = 0;
+let lcdJoined = false;
 
 function lcdStart() {
-	LCD.initialize({ width: LCD_WIDTH, height: LCD_HEIGHT });
+	lcdStartedAt = Date.now();
 	lcdQuality = Number(JpegQuality) || 80;
 	device.setFrameRateTarget(LCD_FRAME_RATE);
+}
+
+// SignalRGB looks up a screen's saved face when LCD.initialize runs. If it hasn't scanned its face
+// list yet, which takes about 10 seconds after it starts, it resets the screen to the default face
+// for good. So the screen joins after the scan, and keeps showing its last picture until then.
+function lcdJoinWhenFacesReady(now) {
+	if (lcdJoined) {
+		return true;
+	}
+	if (now - lcdStartedAt < LCD_FACE_SCAN_WAIT_MS) {
+		return false;
+	}
+	LCD.initialize({ width: LCD_WIDTH, height: LCD_HEIGHT });
+	lcdJoined = true;
+	return true;
 }
 
 function lcdSameAsLast(jpeg) {
@@ -306,7 +324,7 @@ function lcdFirmware(reply) {
 
 function lcdRender() {
 	const now = Date.now();
-	if (now < lcdPausedUntil || now - lcdLastFrame < 1000 / LCD_FRAME_RATE) {
+	if (!lcdJoinWhenFacesReady(now) || now < lcdPausedUntil || now - lcdLastFrame < 1000 / LCD_FRAME_RATE) {
 		return;
 	}
 	lcdLastFrame = now;
