@@ -14,7 +14,7 @@ export function Type() { return "rawusb"; }
 export function ImageUrl() { return "https://raw.githubusercontent.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans/main/assets/devices/lian-li-dongle.png"; }
 export function Size() { return [1, 1]; }
 export function DefaultPosition() { return [0, 0]; }
-export function DefaultScale() { return 1.0; }
+export function DefaultScale() { return 10.0; }
 export function ConflictingProcesses() { return ["L-Connect 3.exe", "L-Connect-Service.exe"]; }
 export function ControllableParameters() { return []; }
 export function LedNames() { return []; }

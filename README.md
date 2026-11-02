@@ -1,44 +1,80 @@
 # Lian Li wireless and LCD control for SignalRGB
 
-Runs Lian Li's L-Wireless gear from SignalRGB instead of L-Connect 3:
-
-| What | How | Tested on |
-|---|---|---|
-| Fan, pump ring and Strimer lighting | Wireless dongle, found automatically | 3x TL LCD, 1x TL140 LCD, 3x TL, HydroShift II LCD-S, Strimer |
-| Fan speed curves | SignalRGB's Cooling page, one curve per fan group, 30% floor by default | Same fans |
-| Pump speed curve | Optional, off by default, sent in the AIO parameter block | HydroShift II LCD-S: followed 2447 to about 3020 rpm and back |
-| Coolant temperature | Published as a SignalRGB sensor | HydroShift II LCD-S |
-| Stored effects | Devices play an animation by themselves, smoothly | Same hardware, simulation-tested upload |
-| HydroShift II LCD-S screen | SignalRGB's LCD page, USB `1CBE:A034` | Firmware `lianlih2s_0001_0027` |
-| TL Wireless LCD screens | SignalRGB's LCD page, USB `1CBE:0006`, with the bridge program | Firmware `tlv2_2024091005_01` |
-| System Stats LCD face | Four live gauges for any SignalRGB sensor | TL Wireless LCD |
+Runs Lian Li's L-Wireless fans, AIO coolers and Strimers from SignalRGB instead of L-Connect 3: lighting, speed curves and LCD screens, all found automatically.
 
 Community project, not affiliated with Lian Li or WhirlwindFX. Use at your own risk.
+
+## What works with it
+
+| Hardware | Lighting | Speed curve | Screen | Tested on real hardware |
+|---|---|---|---|---|
+| UNI FAN TL Wireless, TL LCD | Yes | Yes | TL LCD: yes | **Yes** (3x TL, 3x TL LCD, 1x TL140 LCD) |
+| UNI FAN TL V3, SL V3, SL V3 LCD, SL V4, SL-INF, SL-INF V3, CL, CL V2, P28 V2 (wireless) | Yes | Yes | SL V3 LCD: yes | No. Same protocol in [lian-li-linux](https://github.com/sgtaziz/lian-li-linux) |
+| HydroShift II LCD-S | Yes | Yes, optional | Yes | **Yes** |
+| HydroShift II LCD-C | Yes | Yes, optional | Yes | No |
+| Strimer Wireless (88, 116, 132 and 174 LED versions) | Yes | n/a | n/a | **Yes** (88 LED) |
+| TX and RX dongles `0416:8040` and `0416:8041` | | | | **Yes** |
+| V2 dongles `1A86:E304` and `1A86:E305` | | | | No |
+
+The firmware versions tested are `tlv2_2024091005_01` on TL LCD fans and `lianlih2s_0001_0027` on the pump screen.
+
+**Not covered:** wired UNI FAN controllers (SignalRGB has its own plugins for these), and the Lancool 207, Vision and Universal Screen displays. Anything marked "No" should work but hasn't been run on the real thing, so please open an issue with what you find.
+
+## Install
+
+1. In SignalRGB, open **Settings**, then **Add-ons**, paste this URL and restart SignalRGB:
+
+   ```
+   https://github.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans
+   ```
+
+2. Run the setup once from PowerShell. It asks for admin rights:
+
+   ```powershell
+   & (Get-ChildItem "$env:LOCALAPPDATA\WhirlwindFX\SignalRgb\cache\addons" -Recurse -Filter setup-lianli.ps1 | Select-Object -First 1).FullName
+   ```
+
+3. Optional: to use curves, set **Fan Speeds** on the Lian Li Wireless device to `SignalRGB Fan Control`, then set them on the Cooling page. The pump works the same way through **Pump Speed**.
+
+### What each step does
+
+**The add-on by itself** adds the plugins and changes nothing else. It can't start programs or stop services, so:
+
+- If L-Connect is running, the plugins wait until it's closed, and L-Connect comes back at every boot.
+- With more than one LCD fan, only one screen works, and it may show another screen's picture.
+
+**The setup makes these changes to your PC:**
+
+| Change | Why | Effect you'll notice |
+|---|---|---|
+| Adds the task `Lian Li Handoff to SignalRGB`, running as admin at sign-in | Only one program can hold the dongle | L-Connect Service stops once SignalRGB is up, and returns if SignalRGB closes |
+| Disables the `LConnectServiceWatcher` service | It would undo every handoff | L-Connect Service no longer restarts itself |
+| Adds the task `Lian Li LCD Bridge`, and builds its program in `%LOCALAPPDATA%\LianLiSignalRGB` | SignalRGB can only open one of several identical screens | One small background program, about 14 MB of memory |
+| Copies the System Stats face to `Documents\WhirlwindFX\LCDFaces` | Faces can't be installed by an add-on. Needs SignalRGB Pro | A new face in the LCD tab |
+
+`setup-lianli.ps1 -DryRun` lists the steps without changing anything. `setup-lianli.ps1 -Remove` undoes them apart from the face, then remove the add-on.
+
+**Warnings**
+
+- The L-Connect 3 app can't control this hardware while SignalRGB does. Opening its window hands the hardware back until you close it.
+- Fan and pump speeds only change if you turn curves on. Fans can't be stopped, and the pump can't go below 2000 rpm.
+- Screens take about 30 seconds after SignalRGB starts to change. See [Limits](#limits).
+- If you also run the OpenRGB bundled with L-Connect, it can corrupt SignalRGB's RAM scan. The [motherboard repo](https://github.com/iamjosssssh/signalrgb-msi-x870e-godlike-xedition-controller) has the fix.
 
 Built on [SignalRGB-HydroShift-II-TL-Wireless](https://github.com/ShkourBashtawi/SignalRGB-HydroShift-II-TL-Wireless)
 (its framing, tinyuz compressor and stored effects, `vendor/core.cjs`), which ports
 [lian-li-linux](https://github.com/sgtaziz/lian-li-linux). The pump screen start-up sequence follows
 [signalrgb-hydroshift-ii-s](https://github.com/KnxckbackWili/signalrgb-hydroshift-ii-s). All MIT.
 
-## Install
+## If the fans and Strimer stop changing color
 
-1. In SignalRGB, open **Settings**, then **Add-ons**, paste this repo's URL and restart SignalRGB:
+The TX dongle can hang. SignalRGB then shows **Lian Li TX dongle isn't responding** on the device, or the Lian Li Wireless device disappears because Windows reports the dongle as `Unknown USB Device (Device Descriptor Request Failed)`. Fans and the pump keep running by themselves.
 
-   ```
-   https://github.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans
-   ```
+**Unplug the TX dongle and plug it back in.** If it's on an internal header, shut down and turn off the power supply for 30 seconds. A restart doesn't help, because USB power stays on.
 
-2. Run the one-time setup from PowerShell. It asks for admin rights:
+## Layout
 
-   ```powershell
-   & (Get-ChildItem "$env:LOCALAPPDATA\WhirlwindFX\SignalRgb\cache\addons" -Recurse -Filter setup-lianli.ps1 | Select-Object -First 1).FullName
-   ```
-
-3. To use curves, set **Fan Speeds** on the Lian Li Wireless device to `SignalRGB Fan Control`, then set the curves on the Cooling page.
-
-The add-on alone installs the plugins. Plugins can't start programs, so step 2 does three things they can't. It stops L-Connect at each sign-in once SignalRGB is up, because only one program can hold the dongle. It builds the screen bridge and starts it at sign-in, which you need with more than one TL LCD fan. And it installs the System Stats face, which needs SignalRGB Pro. `setup-lianli.ps1 -DryRun` lists the steps without changing anything, and `-Remove` undoes them, apart from the face.
-
-If you run the bundled OpenRGB through L-Connect, it can also corrupt SignalRGB's RAM scan. See the [motherboard repo](https://github.com/iamjosssssh/signalrgb-msi-x870e-godlike-xedition-controller) for the fix.
+The plugins draw everything to real size at 1 canvas unit = 3 mm, so a 120 mm fan is 40 units across. Other devices come in at SignalRGB's own default sizes, so set them on the Layouts page to match.
 
 ## Who owns the hardware
 
@@ -96,12 +132,12 @@ SignalRGB opens a raw USB handle on only one of several identical devices, and g
 
 ## Limits
 
-- Wireless lighting isn't instant. Uploads get lost on the radio, so a new color is resent until the device reports it, which takes about 2 seconds and now and then up to 8. Each device only reports about once a second, so the lights can change a little before the report shows it.
-- Live animated effects share about 15 updates per second across all groups, so each gets only a few. For smooth motion use **Lighting Mode: Hardware Effect**.
+- Wireless lighting isn't instant. Uploads get lost on the radio, so a new color is resent until the device reports it, which usually takes a few seconds and now and then longer.
+- Live animated effects share about 6 updates per second across all groups, so each gets only a few. For smooth motion use **Lighting Mode: Hardware Effect**.
 - After a power cycle the devices show L-Connect's saved effect until SignalRGB takes over, and the pump runs at L-Connect's saved speed. The same applies once L-Connect takes back over after SignalRGB closes.
 - Screens start 30 seconds after SignalRGB does. SignalRGB looks up a screen's saved face when the screen starts, and resets it to the default for good if its face list isn't ready, which takes about 10 seconds.
 - Screens keep their last frame when SignalRGB closes.
-- The Lian Li Wireless device must fit inside the canvas. Parts outside it read wrong colors, so check its position and scale on the Layouts page.
+- The Lian Li Wireless device must fit inside the canvas. Parts outside it read wrong colors, and a large setup may need its scale reduced on the Layouts page.
 
 ## Build and test
 

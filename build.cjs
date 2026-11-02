@@ -52,6 +52,18 @@ for (const [tpl, out] of outputs) {
 	fs.writeFileSync(path.join(here, "dist", out), body);
 	console.log(`built dist/${out} (${body.length} bytes)`);
 }
+// The V2 dongles speak the same protocol under another USB ID, and a plugin can only name one vendor.
+const v2 = [
+	["LianLi_Wireless.js", "LianLi_Wireless_V2.js", 0x8040, 0xE304],
+	["LianLi_Wireless_Monitor.js", "LianLi_Wireless_Monitor_V2.js", 0x8041, 0xE305],
+];
+for (const [from, out, pid, v2Pid] of v2) {
+	const body = fs.readFileSync(path.join(here, "dist", from), "utf8")
+		.replace("VendorId() { return 0x0416; }", "VendorId() { return 0x1A86; }")
+		.replace(`ProductId() { return 0x${pid.toString(16)}; }`, `ProductId() { return 0x${v2Pid.toString(16).toUpperCase()}; }`);
+	fs.writeFileSync(path.join(here, "dist", out), body);
+	console.log(`built dist/${out} (${body.length} bytes)`);
+}
 for (const stale of ["LianLi_Wireless_Lighting.js"]) {
 	fs.rmSync(path.join(here, "dist", stale), { force: true });
 }

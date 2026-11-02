@@ -161,7 +161,7 @@ class Screen {
     const byte CmdGetVer = 0x0A, CmdBrightness = 0x0E, CmdFrameRate = 0x0F, CmdPushJpg = 0x65;
     const int FrameBytes = 102400, HeaderBytes = 512, MaxJpeg = FrameBytes - HeaderBytes;
     const int IdleCloseMs = 8000, FailsBeforePause = 3, PauseMs = 10000, FirmwareFrameRate = 120;
-    const int AccessDenied = 5, HeldRecheckMs = 10000;
+    const int FileNotFound = 2, AccessDenied = 5, HeldRecheckMs = 10000;
     const uint WriteTimeoutMs = 2000, ReadTimeoutMs = 100;
     static readonly byte[] DesKey = Encoding.ASCII.GetBytes("slv3tuzx");
 
@@ -290,8 +290,14 @@ class Screen {
     }
 
     void Open() {
-        string path = @"\\?\usb#vid_1cbe&pid_0006#" + serial + "#{" + InterfaceGuid + "}";
-        file = Native.CreateFile(path, 0xC0000000, 3, IntPtr.Zero, 3, 0x40000080, IntPtr.Zero);
+        // TL and SL V3 screens use the same protocol under different product IDs.
+        foreach (string pid in new[] { "0006", "0005" }) {
+            string path = @"\\?\usb#vid_1cbe&pid_" + pid + "#" + serial + "#{" + InterfaceGuid + "}";
+            file = Native.CreateFile(path, 0xC0000000, 3, IntPtr.Zero, 3, 0x40000080, IntPtr.Zero);
+            if (!file.IsInvalid || Marshal.GetLastWin32Error() != FileNotFound) {
+                break;
+            }
+        }
         if (file.IsInvalid) {
             int error = Marshal.GetLastWin32Error();
             file = null;

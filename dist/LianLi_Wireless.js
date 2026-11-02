@@ -13,9 +13,10 @@ export function Publisher() { return "Community"; }
 export function Documentation() { return ""; }
 export function Type() { return "rawusb"; }
 export function ImageUrl() { return "https://raw.githubusercontent.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans/main/assets/devices/lian-li-dongle.png"; }
-export function Size() { return [48, 18]; }
-export function DefaultPosition() { return [16, 70]; }
-export function DefaultScale() { return 3.0; }
+export function Size() { return [36, 42]; }
+export function DefaultPosition() { return [10, 10]; }
+// One canvas unit is 3 mm, so ten millimetre layout cells take 10/3 units each.
+export function DefaultScale() { return 3.33; }
 export function DeviceType() { return "aio"; }
 export function SupportsFanControl() { return true; }
 export function ConflictingProcesses() { return ["L-Connect 3.exe", "L-Connect-Service.exe"]; }
@@ -47,7 +48,7 @@ export function ControllableParameters() {
 		{"property":"FanFloor", "group":"", "label":"Lowest Fan Speed (%)", "description":"No curve can take a fan below this, including a new curve that reads 0%.", "type":"number", "min":"11", "max":"100", "step":"1", "default":"30"},
 		{"property":"PumpControl", "group":"", "label":"Pump Speed", "description":"SignalRGB Fan Control runs the pump from a curve on the Cooling page. Off leaves the speed it already has.", "type":"combobox", "values":["Off (keep current speed)", "SignalRGB Fan Control"], "default":"Off (keep current speed)"},
 		{"property":"PumpFloor", "group":"", "label":"Lowest Pump Speed (%)", "description":"Percent of the pump's speed range. No curve can take the pump below this, or below 2000 rpm at any setting.", "type":"number", "min":"40", "max":"100", "step":"1", "default":"50"},
-		{"property":"UpdateRate", "group":"", "label":"Updates per Second", "description":"Shared across all groups, so animated effects run slower on each one.", "type":"combobox", "values":["5", "10", "15", "18"], "default":"15"},
+		{"property":"UpdateRate", "group":"", "label":"Updates per Second", "description":"Shared across all groups, so animated effects run slower on each one.", "type":"combobox", "values":["2", "4", "6"], "default":"6"},
 	];
 }
 
@@ -1150,6 +1151,18 @@ const PROBE_TRIES_BEFORE_NOTICE = 8;
 const MONITOR_PORT = 51871;
 const MONITOR_STALE_MS = 20000;
 const STEADY_REPORTS = 3;
+
+// lian-li-linux leaves 150 ms between uploads, however many devices are waiting.
+const MIN_UPLOAD_MS = 150;
+const TX_FAILS_BEFORE_PAUSE = 3;
+const TX_PAUSE_MS = 10000;
+
+const LAYOUT_MIN_WIDTH = 36;
+const LAYOUT_PUMP_CELLS = 7;
+const LAYOUT_STRIMER_ROWS = 4;
+const LAYOUT_STRIMER_CELLS_PER_LED = 0.23;
+// As reported by a TL140 LCD. The RF record doesn't say a fan's size directly.
+const LAYOUT_140MM_FAN_TYPES = [34, 35];
 const STATUS_MS = 30000;
 
 // Fans drop to their own default speed if commands stop, so each group gets one a second.
@@ -1177,6 +1190,8 @@ let lastFrame = null;
 let nextGroup = 0;
 let monitor = null;
 let monitorAt = 0;
+let txFails = 0;
+let txPausedUntil = 0;
 let lastCounted = null;
 let recordCounts = {};
 let socket = null;
@@ -1219,6 +1234,9 @@ export function Render() {
 		return;
 	}
 	const now = Date.now();
+	if (now < txPausedUntil) {
+		return;
+	}
 
 	if (!masterOk) {
 		if (now - lastProbe >= PROBE_MS) {
@@ -1250,7 +1268,7 @@ export function Render() {
 	}
 	hw.key = "";
 	hwRoll(now);
-	if (now < rgbHoldUntil || now - lastSend < 1000 / Math.max(1, parseInt(UpdateRate, 10) || 15)) {
+	if (now < rgbHoldUntil || now - lastSend < Math.max(MIN_UPLOAD_MS, 1000 / Math.max(1, parseInt(UpdateRate, 10) || 6))) {
 		return;
 	}
 
@@ -1416,45 +1434,69 @@ function groupList() {
 }
 
 function emptyLayout() {
-	return { names: [], positions: [], meta: [], size: [48, 18], ranges: {} };
+	return { names: [], positions: [], meta: [], size: [36, 42], ranges: {} };
+}
+
+// Everything is drawn to real size at one layout cell per 10 mm: a 120 mm fan is 12 cells across.
+// Groups fill rows left to right, so the device box is roughly as wide as a three-fan radiator.
+function fanCells(group) {
+	return group.fanTypes.some((b) => LAYOUT_140MM_FAN_TYPES.includes(b)) ? 14 : 12;
+}
+
+function layoutBox(group) {
+	if (group.kind === "pump") {
+		return [LAYOUT_PUMP_CELLS, LAYOUT_PUMP_CELLS];
+	}
+	if (group.kind === "fans") {
+		return [group.fans * fanCells(group), fanCells(group)];
+	}
+	return [Math.max(8, Math.round(group.leds * LAYOUT_STRIMER_CELLS_PER_LED)), LAYOUT_STRIMER_ROWS];
 }
 
 function buildLayout(groups) {
 	const out = emptyLayout();
-	const rings = groups.reduce((n, g) => n + (g.kind === "fans" ? g.fans : g.kind === "pump" ? 1 : 0), 0);
-	const width = Math.max(12 * rings, 24);
-	const hasStrip = groups.some((g) => g.kind === "strip");
-	out.size = [width, hasStrip ? 18 : 12];
-	let cell = 0;
-	const ring = (count, label) => {
-		const cx = 6 + 12 * cell;
+	const width = groups.reduce((w, g) => Math.max(w, layoutBox(g)[0]), LAYOUT_MIN_WIDTH);
+	let left = 0;
+	let top = 0;
+	let rowHeight = 0;
+	const ring = (count, cx, cy, radius, label) => {
 		for (let i = 0; i < count; i++) {
 			const a = -Math.PI / 2 + (2 * Math.PI * i) / count;
+			const x = cx + radius * Math.cos(a);
 			out.names.push(`${label} LED ${i + 1}`);
-			out.positions.push([Math.round(cx + 5 * Math.cos(a)), Math.round(6 + 5 * Math.sin(a))]);
-			out.meta.push({ step: i, count, x: (cx + 5 * Math.cos(a)) / width });
+			out.positions.push([Math.round(x), Math.round(cy + radius * Math.sin(a))]);
+			out.meta.push({ step: i, count, x: x / width });
 		}
-		cell++;
 	};
 	for (const g of groups) {
+		const [w, h] = layoutBox(g);
+		if (left + w > width) {
+			left = 0;
+			top += rowHeight;
+			rowHeight = 0;
+		}
 		const start = out.names.length;
 		if (g.kind === "pump") {
-			ring(g.leds, g.label);
+			ring(g.leds, left + w / 2, top + h / 2, h / 2 - 0.5, g.label);
 		} else if (g.kind === "fans") {
+			const cells = fanCells(g);
 			for (let f = 0; f < g.fans; f++) {
-				ring(g.ledsPerFan, `${g.label} fan ${f + 1}`);
+				ring(g.ledsPerFan, left + cells * f + cells / 2, top + cells / 2, cells / 2 - 1, `${g.label} fan ${f + 1}`);
 			}
 		} else {
-			const cols = Math.ceil(g.leds / 4);
+			const cols = Math.ceil(g.leds / LAYOUT_STRIMER_ROWS);
 			for (let i = 0; i < g.leds; i++) {
-				const x = 2 + Math.floor((i % cols) * (width - 4) / cols);
+				const x = left + Math.floor((i % cols) * w / cols);
 				out.names.push(`${g.label} LED ${i + 1}`);
-				out.positions.push([x, 13 + Math.floor(i / cols)]);
+				out.positions.push([x, top + Math.floor(i / cols)]);
 				out.meta.push({ step: i, count: g.leds, x: x / width });
 			}
 		}
 		out.ranges[g.key] = [start, out.names.length];
+		left += w;
+		rowHeight = Math.max(rowHeight, h);
 	}
+	out.size = [width, Math.max(top + rowHeight, 1)];
 	return out;
 }
 
@@ -1542,6 +1584,11 @@ function sendRf(rf, channel, rxTarget) {
 		device.pause(1);
 	}
 	lastFrame = { target, opcode: rf[1], sentAt: Date.now() };
+	if (txFails >= TX_FAILS_BEFORE_PAUSE) {
+		llsClearMessage("lls_tx");
+		llsLog("TX dongle is answering again.");
+	}
+	txFails = 0;
 }
 
 function safely(fn) {
@@ -1549,10 +1596,19 @@ function safely(fn) {
 		fn();
 	} catch (e) {
 		const text = String(e);
-		llsLog(`Send failed: ${text}`);
 		if (text.indexOf("guard:") >= 0) {
+			llsLog(`Send failed: ${text}`);
 			guardTripped = true;
 			llsMessage("lls_guard", "Stopped by the safety check", text);
+			return;
+		}
+		// A hung dongle fails every write, and only losing power clears it.
+		if (++txFails === TX_FAILS_BEFORE_PAUSE) {
+			llsLog(`TX dongle stopped accepting data: ${text}`);
+			llsMessage("lls_tx", "Lian Li TX dongle isn't responding", "Close L-Connect 3 if it's open. Otherwise unplug the dongle and plug it back in. Fans and pump keep running by themselves.");
+		}
+		if (txFails >= TX_FAILS_BEFORE_PAUSE) {
+			txPausedUntil = Date.now() + TX_PAUSE_MS;
 		}
 	}
 }

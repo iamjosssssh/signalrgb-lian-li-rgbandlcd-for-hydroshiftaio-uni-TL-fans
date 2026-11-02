@@ -1,4 +1,4 @@
-// Lian Li HydroShift II LCD-S pump screen for SignalRGB. USB 1CBE:A034.
+// Lian Li HydroShift II LCD-S and LCD-C pump screens for SignalRGB. USB 1CBE:A034 and 1CBE:A021.
 // Shows whatever SignalRGB's LCD page is set to. The pump ring and speed are left alone: the ring
 // is lit over the wireless link. Init sequence as tested on this model by
 // KnxckbackWili/signalrgb-hydroshift-ii-s (MIT). Community plugin, not affiliated with Lian Li.
@@ -6,10 +6,13 @@ import LCD from "@SignalRGB/lcd";
 
 export function Name() { return "Lian Li HydroShift II LCD"; }
 export function VendorId() { return 0x1CBE; }
-export function ProductId() { return 0xA034; }
+export function ProductId() { return [0xA021, 0xA034]; }
 export function Publisher() { return "Community"; }
 export function Documentation() { return ""; }
 export function Size() { return [1, 1]; }
+// One canvas unit is 3 mm, and this screen is about 73 mm across.
+export function DefaultPosition() { return [10, 10]; }
+export function DefaultScale() { return 24.0; }
 export function DeviceType() { return "lcd"; }
 export function Type() { return "rawusb"; }
 export function ImageUrl() { return "https://raw.githubusercontent.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans/main/assets/devices/hydroshift-lcd.png"; }

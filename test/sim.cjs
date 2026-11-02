@@ -58,7 +58,11 @@ function load(file, opts = {}) {
 		getNormalizedFanlevel: (n) => state.levels[n],
 		setFrameRateTarget: (f) => { state.frameRate = f; },
 		setName: (n) => { state.name = n; },
+		productId: () => 0x0006,
 		bulk_transfer: (ep, data, len) => {
+			if (ep === 0x01 && state.failWrites) {
+				return { length: -1 };
+			}
 			if (ep === 0x01) {
 				state.writes.push({ at: state.now, data: data.slice(), len });
 				if (opts.onWrite) {
@@ -418,6 +422,52 @@ console.log("--- records caught mid-update");
 	const added = { ...DEVICES[4], mac: "10:00:00:00:00:07", rx: 7 };
 	run(p, 100, DEVICES.concat(added));
 	ok(found() === DEVICES.length + 1, "a device that really appears is still picked up");
+}
+
+console.log("--- real-size layout");
+{
+	const p = load(TX, { macReply: macReply(), params: { FanControl: "Off (keep current speeds)" } });
+	p.api.Initialize();
+	run(p, 500, DEVICES);
+	const [w, h] = p.state.size;
+	const shipped = fs.readFileSync(path.join(dist, TX), "utf8");
+	const scale = Number(/DefaultScale\(\) \{ return ([\d.]+)/.exec(shipped)[1]);
+	const [x, y] = /DefaultPosition\(\) \{ return \[(\d+), (\d+)\]/.exec(shipped).slice(1).map(Number);
+	ok(x + w * scale <= 320 && y + h * scale <= 200, `the default box fits the canvas (${w}x${h} at scale ${scale})`);
+	const across = (label) => {
+		const xs = p.state.leds.positions.filter((_, i) => p.state.leds.names[i].startsWith(label)).map((q) => q[0]);
+		return Math.max(...xs) - Math.min(...xs);
+	};
+	ok(across("3x TL LCD (slot 1) fan 1") === 10, `a 120 mm fan's ring spans 10 of its 12 cells (${across("3x TL LCD (slot 1) fan 1")})`);
+	ok(across("Pump") < across("3x TL LCD (slot 1) fan 1"), "the pump ring is drawn smaller than a fan");
+}
+
+console.log("--- a dongle that stops answering");
+{
+	const p = load(TX, { macReply: macReply(), params: { FanControl: "Off (keep current speeds)" } });
+	p.api.Initialize();
+	run(p, 500, DEVICES);
+	p.state.failWrites = true;
+	run(p, 2000, DEVICES);
+	ok(p.state.messages.lls_tx, "tells the user to replug it");
+	ok(p.state.logs.filter((l) => l.includes("stopped accepting")).length === 1, "and logs it once, not on every write");
+	const logged = p.state.logs.length;
+	run(p, 8000, DEVICES);
+	ok(p.state.logs.length - logged < 12, `then stays quiet while it waits (${p.state.logs.length - logged} log lines in 8 s)`);
+	p.state.failWrites = false;
+	run(p, 12000, DEVICES);
+	ok(!p.state.messages.lls_tx, "clears the message when the dongle comes back");
+}
+
+console.log("--- upload pacing");
+{
+	const p = load(TX, { macReply: macReply(), params: { FanControl: "Off (keep current speeds)", UpdateRate: "15" } });
+	p.api.Initialize();
+	run(p, 500, DEVICES);
+	p.state.writes.length = 0;
+	run(p, 3000, DEVICES);
+	const data = frames(p.state.writes).filter((f) => f.rf[1] === 0x20 && f.rf[18] === 0);
+	ok(data.length / 2 <= 21, `an old 15-per-second setting still leaves 150 ms between uploads (${data.length / 2} in 3 s)`);
 }
 
 console.log("--- color changes get confirmed");

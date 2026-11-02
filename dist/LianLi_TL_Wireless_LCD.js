@@ -1,14 +1,17 @@
-// Lian Li UNI FAN TL Wireless LCD screen for SignalRGB. USB 1CBE:0006.
+// Lian Li UNI FAN TL and SL V3 Wireless LCD screens for SignalRGB. USB 1CBE:0006 and 1CBE:0005.
 // Shows whatever SignalRGB's LCD page is set to. Community plugin, not affiliated with Lian Li.
 import LCD from "@SignalRGB/lcd";
 import udp from "@SignalRGB/udp";
 
-export function Name() { return "Lian Li TL Wireless LCD"; }
+export function Name() { return "Lian Li Wireless LCD Fan"; }
 export function VendorId() { return 0x1CBE; }
-export function ProductId() { return 0x0006; }
+export function ProductId() { return [0x0005, 0x0006]; }
 export function Publisher() { return "Community"; }
 export function Documentation() { return ""; }
 export function Size() { return [1, 1]; }
+// One canvas unit is 3 mm, and this screen is about 54 mm across.
+export function DefaultPosition() { return [10, 10]; }
+export function DefaultScale() { return 18.0; }
 export function DeviceType() { return "lcd"; }
 export function Type() { return "rawusb"; }
 export function ImageUrl() { return "https://assets.signalrgb.com/devices/brands/lian-li/fans/tl-lcd-fan.png"; }
@@ -549,7 +552,7 @@ function tlApplyBrightness() {
 
 export function Initialize() {
 	lcdStart();
-	device.setName(`Lian Li TL LCD ${tlSerial().slice(0, 4)}`);
+	device.setName(`Lian Li ${device.productId() === 0x0005 ? "SL" : "TL"} LCD ${tlSerial().slice(0, 4)}`);
 	lcdCommand(LCD_CMD_FRAME_RATE, [TL_FIRMWARE_FRAME_RATE]);
 	tlNative = lcdLastWriteOk;
 	if (tlNative) {
