@@ -5,6 +5,11 @@ $handoff = Join-Path $PSScriptRoot 'lconnect-handoff.ps1'
 $taskName = 'Lian Li Handoff to SignalRGB'
 $user = "$env:USERDOMAIN\$env:USERNAME"
 
+if (-not (Get-Service LConnectService -ErrorAction SilentlyContinue)) {
+    'L-Connect Service not found, so there is nothing to hand off.'
+    return
+}
+
 # L-Connect Service still starts with Windows to run the fans. The watcher would undo every handoff.
 Set-Service LConnectService -StartupType Automatic
 Stop-Service LConnectServiceWatcher -Force -ErrorAction SilentlyContinue

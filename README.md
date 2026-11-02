@@ -47,9 +47,9 @@ The firmware versions tested are `tlv2_2024091005_01` on TL LCD fans and `lianli
 
 | Change | Why | Effect you'll notice |
 |---|---|---|
-| Adds the task `Lian Li Handoff to SignalRGB`, running as admin at sign-in | Only one program can hold the dongle | L-Connect Service stops once SignalRGB is up, and returns if SignalRGB closes |
-| Disables the `LConnectServiceWatcher` service | It would undo every handoff | L-Connect Service no longer restarts itself |
-| Adds the task `Lian Li LCD Bridge`, and builds its program in `%LOCALAPPDATA%\LianLiSignalRGB` | SignalRGB can only open one of several identical screens | One small background program, about 14 MB of memory |
+| If L-Connect is installed: adds the task `Lian Li Handoff to SignalRGB`, running as admin at sign-in | Only one program can hold the dongle | L-Connect Service stops once SignalRGB is up, and returns if SignalRGB closes |
+| If L-Connect is installed: disables the `LConnectServiceWatcher` service | It would undo every handoff | L-Connect Service no longer restarts itself |
+| Adds the task `Lian Li LCD Bridge`, and builds its program in `%LOCALAPPDATA%\LianLiSignalRGB` | SignalRGB can only open one of several identical screens | One small background program, about 12 MB of memory |
 | Copies the System Stats face to `Documents\WhirlwindFX\LCDFaces` | Faces can't be installed by an add-on. Needs SignalRGB Pro | A new face in the LCD tab |
 
 `setup-lianli.ps1 -DryRun` lists the steps without changing anything. `setup-lianli.ps1 -Remove` undoes them apart from the face, then remove the add-on.

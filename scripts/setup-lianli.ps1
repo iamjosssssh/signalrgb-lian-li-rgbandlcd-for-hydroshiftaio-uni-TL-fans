@@ -31,7 +31,7 @@ $ErrorActionPreference = 'Stop'
 if ($Remove) {
     Unregister-ScheduledTask -TaskName $bridgeTask -Confirm:$false -ErrorAction SilentlyContinue
     Get-Process LianLiLcdBridge -ErrorAction SilentlyContinue | Stop-Process -Force
-    & (Join-Path $installFolder 'scripts\uninstall-takeover.ps1')
+    if (Test-Path $installFolder) { & (Join-Path $installFolder 'scripts\uninstall-takeover.ps1') }
     Remove-Item $installFolder -Recurse -Force -ErrorAction SilentlyContinue
     'Removed.'
     return
@@ -39,6 +39,7 @@ if ($Remove) {
 
 # SignalRGB can replace or delete its add-on folder, so the sign-in tasks run from their own copy.
 New-Item -ItemType Directory -Force $installFolder | Out-Null
+Get-Process LianLiLcdBridge -ErrorAction SilentlyContinue | Stop-Process -Force
 Copy-Item (Join-Path $repo 'scripts'), (Join-Path $repo 'bridge') $installFolder -Recurse -Force
 & (Join-Path $installFolder 'bridge\build.ps1')
 $bridge = Join-Path $installFolder 'bridge\LianLiLcdBridge.exe'
@@ -50,7 +51,7 @@ $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -Ru
 # Priority 4 is normal. A task's default is below normal.
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -Priority 4 -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName $bridgeTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-if (-not (Get-Process LianLiLcdBridge -ErrorAction SilentlyContinue)) { Start-ScheduledTask -TaskName $bridgeTask }
+Start-ScheduledTask -TaskName $bridgeTask
 
 New-Item -ItemType Directory -Force $faces | Out-Null
 Copy-Item (Join-Path $repo 'faces\*.html') $faces -Force
