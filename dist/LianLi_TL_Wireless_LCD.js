@@ -289,7 +289,7 @@ function lcdStart() {
 
 // SignalRGB looks up a screen's saved face when LCD.initialize runs. If it hasn't scanned its face
 // list yet, which takes about 10 seconds after it starts, it resets the screen to the default face
-// for good. So the screen joins after the scan, and keeps showing its last picture until then.
+// for good. So the screen joins after the scan.
 function lcdJoinWhenFacesReady(now) {
 	if (lcdJoined) {
 		return true;
@@ -325,9 +325,37 @@ function lcdFirmware(reply) {
 	return text.join("") || "unknown";
 }
 
+function lcdFromBase64(text) {
+	const abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	const out = [];
+	for (let i = 0; i < text.length; i += 4) {
+		const n = (abc.indexOf(text[i]) << 18) | (abc.indexOf(text[i + 1]) << 12) | ((abc.indexOf(text[i + 2]) & 63) << 6) | (abc.indexOf(text[i + 3]) & 63);
+		out.push((n >> 16) & 255);
+		if (text[i + 2] !== "=") out.push((n >> 8) & 255);
+		if (text[i + 3] !== "=") out.push(n & 255);
+	}
+	return out;
+}
+
+// Whatever L-Connect last drew would stay up until the face joins, so the screen is blank until then.
+function lcdShowBlank(now) {
+	if (now - lcdLastSentAt < LCD_RESEND_MS) {
+		return;
+	}
+	lcdLastSentAt = now;
+	lcdSendFrame(lcdFromBase64(LCD_BLANK_JPEG));
+}
+
 function lcdRender() {
 	const now = Date.now();
-	if (!lcdJoinWhenFacesReady(now) || now < lcdPausedUntil || now - lcdLastFrame < 1000 / LCD_FRAME_RATE) {
+	if (now < lcdPausedUntil) {
+		return;
+	}
+	if (!lcdJoinWhenFacesReady(now)) {
+		lcdShowBlank(now);
+		return;
+	}
+	if (now - lcdLastFrame < 1000 / LCD_FRAME_RATE) {
 		return;
 	}
 	lcdLastFrame = now;
@@ -364,6 +392,7 @@ function lcdRender() {
 
 const LCD_WIDTH = 400;
 const LCD_HEIGHT = 400;
+const LCD_BLANK_JPEG = "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDABALDA4MChAODQ4SERATGCgaGBYWGDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/2wBDARESEhgVGC8aGi9jQjhCY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2P/wAARCAGQAZADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDz+iiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigD//2Q==";
 const LCD_PLAIN_BYTES = 504;
 const LCD_TRAILER = [];
 const LCD_CMD_FRAME_RATE = 0x0F;
@@ -443,18 +472,6 @@ function tlBridgeFrame(jpeg) {
 	return true;
 }
 
-function tlFromBase64(text) {
-	const abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-	const out = [];
-	for (let i = 0; i < text.length; i += 4) {
-		const n = (abc.indexOf(text[i]) << 18) | (abc.indexOf(text[i + 1]) << 12) | ((abc.indexOf(text[i + 2]) & 63) << 6) | (abc.indexOf(text[i + 3]) & 63);
-		out.push((n >> 16) & 255);
-		if (text[i + 2] !== "=") out.push((n >> 8) & 255);
-		if (text[i + 3] !== "=") out.push(n & 255);
-	}
-	return out;
-}
-
 function tlBridgeRunning() {
 	return tlHelloAt > 0 && Date.now() - tlHelloAt < TL_BRIDGE_GONE_MS;
 }
@@ -504,7 +521,7 @@ function tlWriteRelayed() {
 		tlRelayBrightness = -1;
 	}
 	if (tlRelayJpeg) {
-		const jpeg = tlFromBase64(tlRelayJpeg);
+		const jpeg = lcdFromBase64(tlRelayJpeg);
 		tlRelayJpeg = "";
 		if (jpeg.length <= LCD_MAX_JPEG && jpeg[0] === 0xFF && jpeg[1] === 0xD8) {
 			tlWriteUsb(jpeg);

@@ -11,7 +11,7 @@ export function ProductId() { return 0x8041; }
 export function Publisher() { return "Community"; }
 export function Documentation() { return ""; }
 export function Type() { return "rawusb"; }
-export function ImageUrl() { return "https://raw.githubusercontent.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans/main/assets/devices/lian-li-dongle.png"; }
+export function ImageUrl() { return "https://raw.githubusercontent.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans/main/assets/devices/lian-li-dongle.png?v=2"; }
 export function Size() { return [1, 1]; }
 export function DefaultPosition() { return [0, 0]; }
 export function DefaultScale() { return 10.0; }
@@ -27,8 +27,11 @@ import udp from "@SignalRGB/udp";
 //@@GUARD@@
 
 const POLL_MS = 250;
+const POLL_FAILING_MS = 2000;
+const MISSES_BEFORE_NOTICE = 3;
 const STATUS_MS = 60000;
 const MONITOR_PORT = 51871;
+const TX_HELLO_PORT = 51874;
 // A device sometimes misses one reply (radio noise), so remember it for a while.
 const REMEMBER_MS = 15000;
 
@@ -36,6 +39,8 @@ let lastPoll = 0;
 let lastStatus = 0;
 let missed = 0;
 let socket = null;
+let listener = null;
+let txWatch = llsNewWatch(0);
 let seen = new Map();
 
 export function Validate(endpoint) {
@@ -44,42 +49,91 @@ export function Validate(endpoint) {
 
 export function Initialize() {
 	llsLog("Monitor started.");
+	txWatch = llsNewWatch(Date.now());
+	llsClearMessage("lls_rx");
+	openListener();
 	poll();
 }
 
 export function Render() {
-	if (Date.now() - lastPoll >= POLL_MS) {
+	if (Date.now() - lastPoll >= (missed >= MISSES_BEFORE_NOTICE ? POLL_FAILING_MS : POLL_MS)) {
 		poll();
 	}
 }
 
 export function Shutdown() {
-	try {
-		if (socket) {
-			socket.close();
-		}
-	} catch (e) { /* ignore */ }
+	for (const s of [socket, listener]) {
+		try {
+			if (s) {
+				s.close();
+			}
+		} catch (e) { /* ignore */ }
+	}
 	socket = null;
+	listener = null;
+}
+
+function openListener() {
+	try {
+		listener = udp.createSocket();
+		listener.on("message", onTxMessage);
+		listener.on("error", () => {});
+		listener.bind(TX_HELLO_PORT);
+	} catch (e) {
+		listener = null;
+		llsLog(`Could not open UDP port ${TX_HELLO_PORT}: ${e}`);
+	}
+}
+
+function onTxMessage(msg) {
+	const text = typeof msg === "string" ? msg : (msg && typeof msg.data === "string" ? msg.data : "");
+	try {
+		if (JSON.parse(text).kind === "lls-tx") {
+			llsNoteHeard(txWatch, Date.now());
+		}
+	} catch (e) { /* not ours */ }
+}
+
+// This dongle answered, so it can restart the TX, which stops saying it's alive when it hangs.
+// A TX that has hung may not even show up as a device, so its plugin can't help itself.
+function restartTxIfQuiet() {
+	if (!listener || !llsResetDue(txWatch, lastPoll)) {
+		return;
+	}
+	llsLog(`The TX dongle has gone quiet. Restarting it, try ${txWatch.resets + 1}.`);
+	try {
+		llsResetCompanion(txWatch, lastPoll);
+	} catch (e) {
+		llsLog(`Could not restart the TX: ${e}`);
+	}
 }
 
 function poll() {
 	lastPoll = Date.now();
 	let records = null;
+	let failure = "no reply";
 	try {
 		records = getDevices();
 	} catch (e) {
-		llsLog(`Device list failed: ${e}`);
+		failure = String(e);
 	}
 	if (!records) {
 		missed++;
-		if (missed === 3) {
-			llsLog("The RX did not answer. L-Connect probably still owns the dongle.");
-			llsMessage("lls_rx", "RX dongle gave no reply", "L-Connect probably still owns the dongle.");
+		if (missed === MISSES_BEFORE_NOTICE) {
+			llsLog(`The RX did not answer: ${failure}.`);
+			llsMessage("lls_rx", "RX dongle gave no reply", "Close L-Connect 3 if it's open. Otherwise it restarts by itself within a minute. If this stays, unplug the dongle and plug it back in.");
+		}
+		if (missed >= MISSES_BEFORE_NOTICE && llsReopenDue(lastPoll)) {
+			llsReopen(lastPoll);
 		}
 		return;
 	}
+	if (missed >= MISSES_BEFORE_NOTICE) {
+		llsLog("The RX is answering again.");
+	}
 	missed = 0;
 	llsClearMessage("lls_rx");
+	restartTxIfQuiet();
 	records = remember(records, lastPoll);
 	share(records);
 	if (lastPoll - lastStatus >= STATUS_MS) {

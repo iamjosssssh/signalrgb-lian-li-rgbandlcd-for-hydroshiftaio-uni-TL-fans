@@ -36,6 +36,7 @@ const core = [
 	.join("\n");
 const guard = read("src/guard.cjs");
 const lcdCore = read("src/lcd_core.cjs");
+const blank = (size) => fs.readFileSync(path.join(here, "assets", `lcd-black-${size}.jpg`)).toString("base64");
 
 fs.mkdirSync(path.join(here, "dist"), { recursive: true });
 const outputs = [
@@ -48,7 +49,10 @@ for (const [tpl, out] of outputs) {
 	const body = read(`src/${tpl}`)
 		.replace("//@@CORE@@", () => core)
 		.replace("//@@GUARD@@", () => guard)
-		.replace("//@@LCD_CORE@@", () => lcdCore);
+		.replace("//@@LCD_CORE@@", () => lcdCore)
+		.replace("@@BLANK_400@@", () => blank(400))
+		.replace("@@BLANK_480@@", () => blank(480))
+		.replace("@@CLEAR_480@@", () => fs.readFileSync(path.join(here, "assets", "lcd-clear-480.png")).toString("base64"));
 	fs.writeFileSync(path.join(here, "dist", out), body);
 	console.log(`built dist/${out} (${body.length} bytes)`);
 }

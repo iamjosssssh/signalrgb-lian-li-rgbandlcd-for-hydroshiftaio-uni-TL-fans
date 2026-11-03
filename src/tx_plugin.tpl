@@ -12,12 +12,12 @@ export function ProductId() { return 0x8040; }
 export function Publisher() { return "Community"; }
 export function Documentation() { return ""; }
 export function Type() { return "rawusb"; }
-export function ImageUrl() { return "https://raw.githubusercontent.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans/main/assets/devices/lian-li-dongle.png"; }
+export function ImageUrl() { return "https://raw.githubusercontent.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans/main/assets/devices/lian-li-dongle.png?v=2"; }
 export function Size() { return [36, 42]; }
 export function DefaultPosition() { return [10, 10]; }
 // One canvas unit is 3 mm, so ten millimetre layout cells take 10/3 units each.
 export function DefaultScale() { return 3.33; }
-export function DeviceType() { return "aio"; }
+export function DeviceType() { return "lightingcontroller"; }
 export function SupportsFanControl() { return true; }
 export function ConflictingProcesses() { return ["L-Connect 3.exe", "L-Connect-Service.exe"]; }
 
@@ -37,7 +37,7 @@ UpdateRate:readonly
 */
 export function ControllableParameters() {
 	return [
-		{"property":"LightingMode", "group":"lighting", "label":"Lighting Mode", "description":"Canvas follows the active effect. Hardware Effect stores an animation on the devices, which play it smoothly by themselves.", "type":"combobox", "values":["Canvas", "Forced", "Hardware Effect"], "default":"Canvas"},
+		{"property":"LightingMode", "group":"lighting", "label":"Lighting Mode", "description":"Canvas follows the active effect. Hardware Effect stores a small animation on the devices, which play it by themselves. Larger ones often fail to store, so see the README.", "type":"combobox", "values":["Canvas", "Forced", "Hardware Effect"], "default":"Canvas"},
 		{"property":"forcedColor", "group":"lighting", "label":"Forced Color", "min":"0", "max":"360", "type":"color", "default":"#009bde"},
 		{"property":"HwEffect", "group":"lighting", "label":"Hardware Effect", "description":"Canvas Loop records 4 seconds of the current SignalRGB effect.", "type":"combobox", "values":["Rainbow Wave", "Rainbow Spin", "Color Cycle", "Breathing", "Spinner", "Static", "Canvas Loop"], "default":"Rainbow Wave"},
 		{"property":"HwSpeed", "group":"lighting", "label":"Effect Speed", "type":"number", "min":"1", "max":"10", "step":"1", "default":"5"},
@@ -65,18 +65,20 @@ const CONFIRM_WINDOW_MS = 10000;
 const RETRY_REPEATS = 3;
 const RETRY_GAP_MS = 10;
 
+
 // A solid color is still a one-frame animation to the device. A short frame means a new upload has no long frame to wait out.
 const SOLID_FRAME_MS = LL_HW_FRAME_MS;
 const PROBE_MS = 150;
 const PROBE_TRIES_BEFORE_NOTICE = 8;
 const MONITOR_PORT = 51871;
+const TX_HELLO_PORT = 51874;
 const MONITOR_STALE_MS = 20000;
 const STEADY_REPORTS = 3;
 
-// lian-li-linux leaves 150 ms between uploads, however many devices are waiting.
+// More than this drowns the radio: uploads are lost, and so are the fan and pump speed commands sharing it.
 const MIN_UPLOAD_MS = 150;
 const TX_FAILS_BEFORE_PAUSE = 3;
-const TX_PAUSE_MS = 10000;
+const TX_PAUSE_MS = 2000;
 
 const LAYOUT_MIN_WIDTH = 36;
 const LAYOUT_PUMP_CELLS = 7;
@@ -94,8 +96,12 @@ const FAN_NO_LEVEL_MS = 30000;
 const PWM_QUIET_MS = 40;
 const COOLANT_SENSOR = "Coolant";
 
-const HW_RECORD_FRAMES = 80;
-const HW_BLEND_FRAMES = 12;
+// Stored uploads have to be small to land. In testing under about 350 bytes took seconds, 1.1 KB took 40 seconds
+// or more, and 5.7 KB never did. Ten frames a second with 16 levels per color channel gets a recording to 500-1500 bytes.
+const LOOP_FRAME_MS = 100;
+const LOOP_COLOR_STEP = 17;
+const HW_RECORD_FRAMES = 40;
+const HW_BLEND_FRAMES = 6;
 const HW_RETRY_MS = 4000;
 const HW_MAX_TRIES = 5;
 
@@ -111,6 +117,7 @@ let lastFrame = null;
 let nextGroup = 0;
 let monitor = null;
 let monitorAt = 0;
+let rxWatch = llsNewWatch(0);
 let txFails = 0;
 let txPausedUntil = 0;
 let lastCounted = null;
@@ -146,6 +153,8 @@ export function Initialize() {
 	fanRestore = [];
 	hw = freshHwState();
 	llsRoster.groups = {};
+	rxWatch = llsNewWatch(Date.now());
+	llsClearMessage("lls_tx");
 	openSocket();
 	llsLog("Wireless plugin started.");
 }
@@ -156,6 +165,11 @@ export function Render() {
 	}
 	const now = Date.now();
 	if (now < txPausedUntil) {
+		return;
+	}
+	if (txFails >= TX_FAILS_BEFORE_PAUSE && llsReopenDue(now)) {
+		masterOk = false;
+		llsReopen(now);
 		return;
 	}
 
@@ -169,7 +183,14 @@ export function Render() {
 
 	if (now - lastHeartbeat >= HEARTBEAT_MS) {
 		lastHeartbeat = now;
-		safely(() => sendRf(llBuildClockFrame(llsRoster.masterBytes), llsRoster.channel, LLS_BROADCAST));
+		safely(() => {
+			sendRf(llBuildClockFrame(llsRoster.masterBytes), llsRoster.channel, LLS_BROADCAST);
+			tellMonitor();
+		});
+	}
+	if (llsResetDue(rxWatch, now)) {
+		llsLog(`The RX dongle has gone quiet. Restarting it, try ${rxWatch.resets + 1}.`);
+		safely(() => llsResetCompanion(rxWatch, now));
 	}
 
 	syncRoster();
@@ -273,9 +294,19 @@ function onMonitorMessage(msg) {
 		if (j && j.kind === "lls-monitor" && Array.isArray(j.devices)) {
 			monitor = j;
 			monitorAt = Date.now();
+			llsNoteHeard(rxWatch, monitorAt);
 			llsClearMessage("lls_wait");
 		}
 	} catch (e) { /* not ours */ }
+}
+
+// Lets the monitor know this dongle is taking data, so it can restart it if that stops.
+function tellMonitor() {
+	try {
+		if (socket) {
+			socket.write(JSON.stringify({ kind: "lls-tx" }), "127.0.0.1", TX_HELLO_PORT);
+		}
+	} catch (e) { /* the monitor just won't hear this one */ }
 }
 
 function monitorRecords() {
@@ -523,10 +554,10 @@ function safely(fn) {
 			llsMessage("lls_guard", "Stopped by the safety check", text);
 			return;
 		}
-		// A hung dongle fails every write, and only losing power clears it.
+		// Reopening the connection fixes most of these, and if not, the monitor restarts the dongle through the RX.
 		if (++txFails === TX_FAILS_BEFORE_PAUSE) {
 			llsLog(`TX dongle stopped accepting data: ${text}`);
-			llsMessage("lls_tx", "Lian Li TX dongle isn't responding", "Close L-Connect 3 if it's open. Otherwise unplug the dongle and plug it back in. Fans and pump keep running by themselves.");
+			llsMessage("lls_tx", "Lian Li TX dongle isn't responding", "Close L-Connect 3 if it's open. Otherwise it restarts by itself within a minute. If this stays, unplug the dongle and plug it back in. Fans and pump keep running by themselves.");
 		}
 		if (txFails >= TX_FAILS_BEFORE_PAUSE) {
 			txPausedUntil = Date.now() + TX_PAUSE_MS;
@@ -877,6 +908,12 @@ function hwKey() {
 	return JSON.stringify([HwEffect, loop ? 0 : HwSpeed, loop ? 0 : HwColor, Object.keys(llsRoster.groups).sort()]);
 }
 
+function recordedLoop(recorded, intervalMs, startedAt) {
+	const step = (v) => Math.min(255, Math.round(v / LOOP_COLOR_STEP) * LOOP_COLOR_STEP);
+	const frames = llLoopFrames(recorded, HW_BLEND_FRAMES).map((f) => f.map((c) => [step(c[0]), step(c[1]), step(c[2])]));
+	return { frames, intervalMs, startedAt };
+}
+
 function hwTargets(name, loop) {
 	return groupList().map((group) => {
 		const [a, b] = layout.ranges[group.key];
@@ -887,6 +924,7 @@ function hwTargets(name, loop) {
 	});
 }
 
+// A retry is the same upload with the same ID, because the device seems to fill in what it missed.
 function hwSend(t, now) {
 	t.sentAt = now;
 	t.tries++;
@@ -977,7 +1015,7 @@ function hwTick(now) {
 		}
 	}
 	if (hw.recording) {
-		if (now - hw.lastRecord >= LL_HW_FRAME_MS) {
+		if (now - hw.lastRecord >= LOOP_FRAME_MS) {
 			if (!hw.recording.length) {
 				hw.recordStart = now;
 			}
@@ -985,7 +1023,7 @@ function hwTick(now) {
 			hw.recording.push(allColors());
 		}
 		if (hw.recording.length >= HW_RECORD_FRAMES + HW_BLEND_FRAMES) {
-			hw.loop = { frames: llLoopFrames(hw.recording, HW_BLEND_FRAMES), intervalMs: (now - hw.recordStart) / (hw.recording.length - 1) };
+			hw.loop = recordedLoop(hw.recording, (now - hw.recordStart) / (hw.recording.length - 1), hw.recordStart);
 			hw.recording = null;
 			hwStart("Canvas Loop", hw.loop, now);
 		}
@@ -1000,7 +1038,7 @@ function hwRoll(now) {
 		hw.rolling = [];
 		return;
 	}
-	if (now - hw.rollingAt < LL_HW_FRAME_MS || !layout.names.length) {
+	if (now - hw.rollingAt < LOOP_FRAME_MS || !layout.names.length) {
 		return;
 	}
 	hw.rollingAt = now;
@@ -1019,7 +1057,7 @@ function hwOnExit() {
 	if (name === "Canvas Loop") {
 		const r = hw.rolling;
 		if (r.length >= 2 * HW_BLEND_FRAMES) {
-			loop = { frames: llLoopFrames(r.map((x) => x.colors), HW_BLEND_FRAMES), intervalMs: (r[r.length - 1].at - r[0].at) / (r.length - 1) };
+			loop = recordedLoop(r.map((x) => x.colors), (r[r.length - 1].at - r[0].at) / (r.length - 1), r[0].at);
 		} else {
 			loop = hw.loop;
 			name = loop ? name : "Rainbow Wave";

@@ -3,6 +3,7 @@
 //
 // On the air: clock heartbeat, RGB uploads and fan and pump speed only. LCD theme,
 // picture, reboot, bind and firmware frames are rejected here, not just unused.
+// On USB, besides those: one dongle restarting the other when it has hung.
 // Speed frames can't stop a fan or take the pump under LLS_PUMP_MIN_SAFE_RPM.
 // Targets: only devices the RX reports as bound to this PC's own TX dongle.
 // ---------------------------------------------------------------------------
@@ -12,6 +13,22 @@ const LLS_STRIMER_LEDS = { 1: 116, 2: 132, 3: 174, 4: 88 };
 const LLS_PUMP_MIN_RPM = 1000;
 const LLS_PUMP_MIN_SAFE_RPM = 2000;
 const LLS_COOLING_GRACE_MS = 5000;
+// lian-li-linux waits this long. Giving up sooner cancels a transfer mid-packet, which can hang a dongle.
+const LLS_WRITE_TIMEOUT_MS = 5000;
+
+// Sent to one dongle, this restarts the other, so a hung one comes back without being unplugged.
+// Paced like lian-li-linux: a few quick tries, then one every five minutes, and the link has to stay up to earn them back.
+const LLS_USB_CMD_RESET_COMPANION = 0x15;
+const LLS_QUIET_BEFORE_RESET_MS = 30000;
+const LLS_RESET_WAITS_MS = [30000, 30000, 120000];
+const LLS_RESET_SLOW_MS = 300000;
+const LLS_LINK_HEALTHY_MS = 300000;
+
+// A USB error can leave SignalRGB's connection to a dongle failing every write (LIBUSB_ERROR_IO) although
+// the dongle itself is fine, and it can hit both dongles at once. Reloading the plugin reopens the connection.
+// A reload forgets everything, so time since loading is what keeps it from looping.
+const LLS_REOPEN_MIN_UPTIME_MS = 60000;
+let llsLoadedAt = Date.now();
 
 const llsRoster = { master: "", masterBytes: null, channel: 0, groups: {} };
 
@@ -159,8 +176,50 @@ function llsAssertGetDev(packet) {
 	}
 }
 
+function llsReopenDue(now) {
+	return now - llsLoadedAt >= LLS_REOPEN_MIN_UPTIME_MS;
+}
+
+function llsReopen(now) {
+	llsLoadedAt = now;
+	llsLog("Reopening the USB connection.");
+	device.forceReloadPlugin();
+}
+
+function llsNewWatch(now) {
+	return { heardAt: now, upSince: 0, resets: 0, lastReset: 0 };
+}
+
+function llsNoteHeard(watch, now) {
+	watch.heardAt = now;
+	watch.upSince = watch.upSince || now;
+	if (now - watch.upSince >= LLS_LINK_HEALTHY_MS) {
+		watch.resets = 0;
+	}
+}
+
+function llsResetDue(watch, now) {
+	if (now - watch.heardAt < LLS_QUIET_BEFORE_RESET_MS) {
+		return false;
+	}
+	if (!watch.resets) {
+		return true;
+	}
+	const wait = watch.resets <= LLS_RESET_WAITS_MS.length ? LLS_RESET_WAITS_MS[watch.resets - 1] : LLS_RESET_SLOW_MS;
+	return now - watch.lastReset >= wait;
+}
+
+function llsResetCompanion(watch, now) {
+	watch.resets++;
+	watch.lastReset = now;
+	watch.upSince = 0;
+	const packet = new Array(64).fill(0);
+	packet[0] = LLS_USB_CMD_RESET_COMPANION;
+	llsWrite(packet);
+}
+
 function llsWrite(packet) {
-	const r = device.bulk_transfer(0x01, packet, packet.length, 100);
+	const r = device.bulk_transfer(0x01, packet, packet.length, LLS_WRITE_TIMEOUT_MS);
 	if (r && typeof r.length === "number" && r.length < 0) {
 		throw new Error("USB write failed");
 	}

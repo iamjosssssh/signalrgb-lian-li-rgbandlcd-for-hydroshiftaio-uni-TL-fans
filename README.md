@@ -58,7 +58,7 @@ The firmware versions tested are `tlv2_2024091005_01` on TL LCD fans and `lianli
 
 - The L-Connect 3 app can't control this hardware while SignalRGB does. Opening its window hands the hardware back until you close it.
 - Fan and pump speeds only change if you turn curves on. Fans can't be stopped, and the pump can't go below 2000 rpm.
-- Screens take about 30 seconds after SignalRGB starts to change. See [Limits](#limits).
+- Screens go blank as soon as SignalRGB starts, clearing L-Connect's picture and its water temperature and pump speed overlay. Your chosen face appears about 30 seconds later. See [Limits](#limits).
 - If you also run the OpenRGB bundled with L-Connect, it can corrupt SignalRGB's RAM scan. The [motherboard repo](https://github.com/iamjosssssh/signalrgb-msi-x870e-godlike-xedition-controller) has the fix.
 
 Built on [SignalRGB-HydroShift-II-TL-Wireless](https://github.com/ShkourBashtawi/SignalRGB-HydroShift-II-TL-Wireless)
@@ -68,9 +68,27 @@ Built on [SignalRGB-HydroShift-II-TL-Wireless](https://github.com/ShkourBashtawi
 
 ## If the fans and Strimer stop changing color
 
-The TX dongle can hang. SignalRGB then shows **Lian Li TX dongle isn't responding** on the device, or the Lian Li Wireless device disappears because Windows reports the dongle as `Unknown USB Device (Device Descriptor Request Failed)`. Fans and the pump keep running by themselves.
+USB errors can stop SignalRGB's connection to the dongles, and the plugins now repair this by themselves. Each one reopens its own connection within seconds, and a dongle that stays quiet for 30 seconds gets restarted through the other one. You'll see **Lian Li TX dongle isn't responding** or **RX dongle gave no reply** while that happens. Fans and the pump keep running.
 
-**Unplug the TX dongle and plug it back in.** If it's on an internal header, shut down and turn off the power supply for 30 seconds. A restart doesn't help, because USB power stays on.
+If the message doesn't clear after a few minutes, unplug the dongle and plug it back in. If it's on an internal header, shut down and turn off the power supply for 30 seconds, because a restart doesn't cut USB power.
+
+## Moving effects
+
+**Fans, the Strimer and the pump ring can't play fast or multi-color effects smoothly from SignalRGB.** This is the main limit of this project.
+
+The radio only fits about 6 live color updates a second, shared across all your groups. With five groups, each one changes about once a second, and they change one after another rather than together. Solid colors and slow fades look fine, usually landing in under a second. A rainbow looks slow and steppy, and groups won't always match.
+
+What was tried, on real hardware:
+
+| Approach | Result |
+|---|---|
+| More updates per second | Worse. It drowned the radio, and fan and pump speed commands were lost too, so the setting stops at 6 |
+| Storing a recording of the effect on each device | Moving recordings mostly don't land. Under about 350 bytes took seconds, 1.1 KB took 40 seconds or more, and 5.7 KB never landed. A 4-second recording is 500-1500 bytes even at reduced quality |
+| Short stored clips sent continuously | The lights looked frozen |
+
+**Hardware Effect** and **Canvas Loop** remain in the settings, but expect the same problem with anything larger than a few hundred bytes. If you know why these uploads fail, please open an issue.
+
+The LCD screens aren't affected, because they run over USB.
 
 ## Layout
 
@@ -132,8 +150,7 @@ SignalRGB opens a raw USB handle on only one of several identical devices, and g
 
 ## Limits
 
-- Wireless lighting isn't instant. Uploads get lost on the radio, so a new color is resent until the device reports it, which usually takes a few seconds and now and then longer.
-- Live animated effects share about 6 updates per second across all groups, so each gets only a few. For smooth motion use **Lighting Mode: Hardware Effect**.
+- Wireless lighting isn't instant, and moving effects look slow and steppy. See [Moving effects](#moving-effects).
 - After a power cycle the devices show L-Connect's saved effect until SignalRGB takes over, and the pump runs at L-Connect's saved speed. The same applies once L-Connect takes back over after SignalRGB closes.
 - Screens start 30 seconds after SignalRGB does. SignalRGB looks up a screen's saved face when the screen starts, and resets it to the default for good if its face list isn't ready, which takes about 10 seconds.
 - Screens keep their last frame when SignalRGB closes.

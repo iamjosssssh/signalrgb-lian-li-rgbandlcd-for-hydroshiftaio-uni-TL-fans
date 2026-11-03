@@ -31,6 +31,7 @@ export function ControllableParameters() {
 
 const LCD_WIDTH = 400;
 const LCD_HEIGHT = 400;
+const LCD_BLANK_JPEG = "@@BLANK_400@@";
 const LCD_PLAIN_BYTES = 504;
 const LCD_TRAILER = [];
 const LCD_CMD_FRAME_RATE = 0x0F;
@@ -110,18 +111,6 @@ function tlBridgeFrame(jpeg) {
 	return true;
 }
 
-function tlFromBase64(text) {
-	const abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-	const out = [];
-	for (let i = 0; i < text.length; i += 4) {
-		const n = (abc.indexOf(text[i]) << 18) | (abc.indexOf(text[i + 1]) << 12) | ((abc.indexOf(text[i + 2]) & 63) << 6) | (abc.indexOf(text[i + 3]) & 63);
-		out.push((n >> 16) & 255);
-		if (text[i + 2] !== "=") out.push((n >> 8) & 255);
-		if (text[i + 3] !== "=") out.push(n & 255);
-	}
-	return out;
-}
-
 function tlBridgeRunning() {
 	return tlHelloAt > 0 && Date.now() - tlHelloAt < TL_BRIDGE_GONE_MS;
 }
@@ -171,7 +160,7 @@ function tlWriteRelayed() {
 		tlRelayBrightness = -1;
 	}
 	if (tlRelayJpeg) {
-		const jpeg = tlFromBase64(tlRelayJpeg);
+		const jpeg = lcdFromBase64(tlRelayJpeg);
 		tlRelayJpeg = "";
 		if (jpeg.length <= LCD_MAX_JPEG && jpeg[0] === 0xFF && jpeg[1] === 0xD8) {
 			tlWriteUsb(jpeg);

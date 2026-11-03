@@ -55,6 +55,7 @@ function load(file, opts = {}) {
 		SetTemperature: (n, v) => { state.sensors[n] = v; },
 		setRPM: (n, v) => { state.rpm[n] = v; },
 		fanControlDisabled: () => state.fanDisabled,
+		forceReloadPlugin: () => { state.reloads = (state.reloads || 0) + 1; },
 		getNormalizedFanlevel: (n) => state.levels[n],
 		setFrameRateTarget: (f) => { state.frameRate = f; },
 		setName: (n) => { state.name = n; },
@@ -623,7 +624,9 @@ console.log("--- fan screen plugin");
 	p.api.Initialize();
 	const atInit = p.state.writes.length;
 	run(p, 20000);
-	ok(!p.state.lcdInit && p.state.writes.length === atInit, "a screen waits for SignalRGB's face scan, so its saved face isn't reset");
+	const blanks = p.state.writes.slice(atInit);
+	ok(!p.state.lcdInit, "a screen waits for SignalRGB's face scan, so its saved face isn't reset");
+	ok(blanks.length >= 5 && blanks.length <= 11 && blanks.every((w) => w.len === 102400 && w.data[512] === 0xff && w.data[513] === 0xd8), `meanwhile it shows a blank instead of what L-Connect left (${blanks.length} in 20 s)`);
 	run(p, 11000);
 	ok(p.state.lcdInit && p.state.lcdInit.width === 400 && p.state.lcdInit.height === 400 && p.state.writes.length > atInit, "then asks SignalRGB for 400x400 and starts showing frames");
 }
@@ -763,7 +766,7 @@ console.log("--- pump screen plugin");
 	p.api.Initialize();
 	p.state.now += 30000;
 	const op = (w) => decrypt(w.data.slice(0, 504))[0];
-	ok(p.state.writes.map(op).join() === [0x7b, 0x34, 0x0a, 0x0e].join(), "init matches the sequence tested on this model");
+	ok(p.state.writes.map(op).join() === [0x7b, 0x34, 0x66, 0x0a, 0x0e].join(), "init matches the sequence tested on this model, and clears L-Connect's top layer");
 	p.state.writes.length = 0;
 	run(p, 500);
 	ok(p.state.writes.length > 0 && p.state.writes.every((w) => op(w) === 0x65), "frames use only the JPEG command");
@@ -776,7 +779,99 @@ console.log("--- pump screen plugin");
 	p.state.now += 30000;
 	p.state.writes.length = 0;
 	run(p, 20000);
-	ok(p.state.writes.length <= 6, `no acknowledgements: backs off instead of hammering the pump (${p.state.writes.length} frames in 20 s)`);
+	const pushed = p.state.writes.filter((w) => decrypt(w.data.slice(0, 504))[0] === 0x65).length;
+	ok(pushed <= 6, `no acknowledgements: backs off instead of hammering the pump (${pushed} frames in 20 s)`);
+	ok(p.state.writes.length - pushed === pushed * 3, "and asks it to drop L-Connect's theme, clock and top layer after each one");
+}
+{
+	const p = load(H2S_LCD);
+	p.api.Initialize();
+	const top = p.state.writes.filter((w) => decrypt(w.data.slice(0, 504))[0] === 0x66);
+	ok(top.length === 1 && top[0].data[512] === 0x89 && top[0].data[513] === 0x50, "the pump screen covers L-Connect's water temperature and pump speed layer with a transparent PNG");
+	p.state.replies.length = 0;
+	p.state.writes.length = 0;
+	p.state.now += 3000;
+	p.api.Render();
+	const w = p.state.writes.find((x) => decrypt(x.data.slice(0, 504))[0] === 0x65);
+	const jpeg = w && w.data.slice(512);
+	ok(jpeg && jpeg[0] === 0xff && jpeg[1] === 0xd8 && jpeg[jpeg.length - 2] === 0xff && jpeg[jpeg.length - 1] === 0xd9, "the pump's blank is a whole JPEG");
+}
+
+console.log("--- hung dongles restart each other");
+{
+	const p = load(TX, { macReply: macReply(), params: { FanControl: "Off (keep current speeds)" } });
+	const resets = () => p.state.writes.filter((w) => w.data[0] === 0x15);
+	p.api.Initialize();
+	run(p, 20000, DEVICES);
+	ok(p.state.sent.some((m) => m.kind === "lls-tx"), "the TX tells the monitor it's taking data");
+	ok(resets().length === 0, "an RX that keeps reporting is left alone");
+	run(p, 29000);
+	ok(resets().length === 0, "and so is one that has only just gone quiet");
+	run(p, 2000);
+	ok(resets().length === 1, "after 30 s of silence the TX restarts the RX");
+	const w = resets()[0];
+	ok(w.data.length === 64 && w.data.slice(1).every((b) => b === 0), "with a bare 64-byte command");
+	run(p, 25000);
+	ok(resets().length === 1, "it waits before trying again");
+	run(p, 6000);
+	run(p, 31000);
+	run(p, 121000);
+	ok(resets().length === 4, `three quick tries and a slower one (${resets().length})`);
+	run(p, 290000);
+	ok(resets().length === 4, "then only one every five minutes");
+	run(p, 11000);
+	ok(resets().length === 5, "and it keeps trying at that pace");
+	run(p, 310000, DEVICES);
+	ok(resets().length === 5, "a link that's back gets no more restarts");
+	run(p, 31000);
+	const quick = resets().length;
+	run(p, 32000);
+	ok(quick === 6 && resets().length === 7, "and earns its quick tries back after five good minutes");
+}
+{
+	const listReply = () => { const r = new Array(64).fill(0); r[0] = 0x10; return r; };
+	const p = load(RX, { onWrite: (state, data) => { if (data[0] === 0x10) state.replies.push(listReply()); } });
+	const resets = () => p.state.writes.filter((w) => w.data[0] === 0x15);
+	const hello = () => p.state.handlers.message(JSON.stringify({ kind: "lls-tx" }));
+	p.api.Initialize();
+	for (let i = 0; i < 25; i++) {
+		hello();
+		run(p, 2000);
+	}
+	ok(resets().length === 0, "a TX that keeps saying it's alive is left alone");
+	hello();
+	run(p, 29000);
+	ok(resets().length === 0, "and so is one that has only just gone quiet");
+	run(p, 2000);
+	ok(resets().length === 1, "after 30 s of silence the RX restarts the TX, even if it has dropped off USB");
+	const logged = p.state.logs.length;
+	p.state.failWrites = true;
+	run(p, 60000);
+	ok(resets().length === 1, "a dongle that isn't answering itself can't restart the other");
+	ok(p.state.messages.lls_rx, "the RX says so on its device card");
+	ok(p.state.reloads === 1, `it reopens its own USB connection, at most once a minute (${p.state.reloads})`);
+	ok(p.state.logs.length - logged <= 3, `and doesn't fill the log (${p.state.logs.length - logged} lines in a minute)`);
+	p.state.failWrites = false;
+	run(p, 3000);
+	ok(!p.state.messages.lls_rx && p.state.logs.some((l) => l.includes("answering again")), "the message clears when it's back");
+}
+{
+	const p = load(TX, { macReply: macReply(), params: { FanControl: "Off (keep current speeds)" } });
+	p.api.Initialize();
+	run(p, 500, DEVICES);
+	p.state.failWrites = true;
+	run(p, 5000, DEVICES);
+	ok(!p.state.reloads, "a TX that has only just started isn't reloaded, so a slow L-Connect handoff can't cause a loop");
+	p.state.failWrites = false;
+	run(p, 70000, DEVICES);
+	ok(!p.state.reloads, "and a healthy one never is");
+	p.state.failWrites = true;
+	run(p, 5000, DEVICES);
+	ok(p.state.reloads === 1, "once it's been up a while, a write failure reopens the connection within seconds");
+	run(p, 20000, DEVICES);
+	ok(p.state.reloads === 1, "and only once a minute if that doesn't help");
+	const text = fs.readFileSync(path.join(dist, TX), "utf8");
+	ok(/const LLS_WRITE_TIMEOUT_MS = 5000/.test(text) && !/bulk_transfer\(0x01, packet, packet.length, 100\)/.test(text), "USB writes wait as long as lian-li-linux's do");
 }
 
 console.log(`\n${checks - fails}/${checks} checks passed`);

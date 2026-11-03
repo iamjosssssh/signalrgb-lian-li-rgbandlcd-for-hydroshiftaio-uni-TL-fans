@@ -15,7 +15,7 @@ export function DefaultPosition() { return [10, 10]; }
 export function DefaultScale() { return 24.0; }
 export function DeviceType() { return "lcd"; }
 export function Type() { return "rawusb"; }
-export function ImageUrl() { return "https://raw.githubusercontent.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans/main/assets/devices/hydroshift-lcd.png"; }
+export function ImageUrl() { return "https://raw.githubusercontent.com/iamjosssssh/signalrgb-lian-li-rgbandlcd-for-hydroshiftaio-uni-TL-fans/main/assets/devices/hydroshift-lcd.png?v=2"; }
 export function ConflictingProcesses() { return ["L-Connect 3.exe", "L-Connect-Service.exe"]; }
 export function Validate(endpoint) { return endpoint.interface === 0; }
 
@@ -32,27 +32,44 @@ export function ControllableParameters() {
 
 const LCD_WIDTH = 480;
 const LCD_HEIGHT = 480;
+const LCD_BLANK_JPEG = "@@BLANK_480@@";
+const LCD_CLEAR_PNG = "@@CLEAR_480@@";
 const LCD_PLAIN_BYTES = 500;
 const LCD_TRAILER = [0, 0, 0, 0, 0, 0, 0xA1, 0x1A];
 const LCD_CMD_STOP_CLOCK = 0x34;
 const LCD_CMD_STOP_PLAY = 0x7B;
-const LCD_ALLOWED = [LCD_CMD_GET_VER, LCD_CMD_BRIGHTNESS, LCD_CMD_STOP_CLOCK, LCD_CMD_PUSH_JPG, LCD_CMD_STOP_PLAY];
+const LCD_CMD_PUSH_PNG = 0x66;
+const LCD_ALLOWED = [LCD_CMD_GET_VER, LCD_CMD_BRIGHTNESS, LCD_CMD_STOP_CLOCK, LCD_CMD_PUSH_JPG, LCD_CMD_PUSH_PNG, LCD_CMD_STOP_PLAY];
 const LCD_MAX_JPEG = 153600;
 const H2S_ACK_TRIES = 32;
 
 function lcdSendFrame(jpeg) {
 	const n = jpeg.length;
 	const packet = lcdHeader(LCD_CMD_PUSH_JPG, [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]).concat(jpeg);
-	if (!lcdWrite(packet, packet.length)) {
-		return false;
+	if (lcdWrite(packet, packet.length) && lcdReadReply(LCD_CMD_PUSH_JPG, H2S_ACK_TRIES)) {
+		return true;
 	}
-	return !!lcdReadReply(LCD_CMD_PUSH_JPG, H2S_ACK_TRIES);
+	h2sTakeOver();
+	return false;
+}
+
+// Stops L-Connect's theme or clock. The screen won't take commands until it has had these.
+// L-Connect also draws things like water temperature and pump speed on a layer above the picture,
+// and that layer stays up after it exits. A fully transparent picture is how it clears that layer itself.
+function h2sTakeOver() {
+	lcdCommand(LCD_CMD_STOP_PLAY);
+	lcdCommand(LCD_CMD_STOP_CLOCK);
+	const png = lcdFromBase64(LCD_CLEAR_PNG);
+	const n = png.length;
+	const packet = lcdHeader(LCD_CMD_PUSH_PNG, [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]).concat(png);
+	if (lcdWrite(packet, packet.length)) {
+		lcdReadReply(LCD_CMD_PUSH_PNG, H2S_ACK_TRIES);
+	}
 }
 
 export function Initialize() {
 	lcdStart();
-	lcdCommand(LCD_CMD_STOP_PLAY);
-	lcdCommand(LCD_CMD_STOP_CLOCK);
+	h2sTakeOver();
 	lcdLog(`Pump screen firmware: ${lcdFirmware(lcdCommand(LCD_CMD_GET_VER))}.`);
 	// The backlight stays full, and the LCD tab's brightness slider dims the picture itself.
 	lcdCommand(LCD_CMD_BRIGHTNESS, [100]);
